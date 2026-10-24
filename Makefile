@@ -88,8 +88,20 @@ $(UNIT_BIN): tests/backend/projection_test.cpp $(wildcard backend/include/skylit
 
 # Engine-level unit tests (weighting table, clamping, data-support flagging,
 # multi-Greek selection...). No server / threads involved.
-test-unit: $(UNIT_BIN)
+TAIL_BIN := $(BUILD_DIR)/candles_tail_test
+$(TAIL_BIN): tests/backend/candles_tail_test.cpp $(wildcard backend/include/skylit/*.hpp) | check-compiler
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(STD) $(WARN) $(OPT_RELEASE) $(INCLUDES) $< -o $@
+
+ESC_BIN := $(BUILD_DIR)/json_escape_test
+$(ESC_BIN): tests/backend/json_escape_test.cpp $(wildcard backend/include/skylit/*.hpp) | check-compiler
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(STD) $(WARN) $(OPT_RELEASE) $(INCLUDES) $< -o $@
+
+test-unit: $(UNIT_BIN) $(TAIL_BIN) $(ESC_BIN)
 	$(UNIT_BIN)
+	$(TAIL_BIN)
+	$(ESC_BIN)
 
 test-smoke: build
 	bash tests/backend/smoke_test.sh

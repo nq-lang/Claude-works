@@ -40,14 +40,15 @@ using Clock = std::chrono::steady_clock;
 struct Row { const char* name; double us; std::size_t bytes; };
 std::vector<Row> rows;
 
-// Runs `fn` repeatedly for ~budget_ms and records the best-of-3 mean time per call.
-void bench(const char* name, const std::function<std::size_t()>& fn, int budget_ms = 400) {
+// Runs `fn` repeatedly for ~budget_ms and records the best (minimum) per-slice mean time per call.
+void bench(const char* name, const std::function<std::size_t()>& fn, int budget_ms = 900) {
     std::size_t bytes = fn();  // warm-up + payload size
+    // min over 9 slices: on a shared/noisy machine the minimum is the least-disturbed estimate.
     double best = 1e30;
-    for (int rep = 0; rep < 3; ++rep) {
+    for (int rep = 0; rep < 9; ++rep) {
         int n = 0;
         auto t0 = Clock::now();
-        while (std::chrono::duration<double, std::milli>(Clock::now() - t0).count() < budget_ms / 3.0) {
+        while (std::chrono::duration<double, std::milli>(Clock::now() - t0).count() < budget_ms / 9.0) {
             fn();
             ++n;
         }
@@ -67,9 +68,12 @@ int main() {
     // ---- startup cost (constructor seeds boards, tick history, velocity history)
     double startup_ms = 0;
     {
-        auto t0 = Clock::now();
-        for (int i = 0; i < 3; ++i) { live::LiveFeedManager f(tickers); (void)f; }
-        startup_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count() / 3.0;
+        startup_ms = 1e30;
+        for (int i = 0; i < 7; ++i) {
+            auto t0 = Clock::now();
+            { live::LiveFeedManager f(tickers); (void)f; }
+            startup_ms = std::min(startup_ms, std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+        }
     }
     live::LiveFeedManager feed(tickers);
 

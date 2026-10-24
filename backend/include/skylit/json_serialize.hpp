@@ -20,10 +20,23 @@
 
 namespace skylit::json {
 
+// True for the bytes JSON requires us to escape: '"', '\\' and the C0 control characters.
+inline bool needs_escape(char c) {
+    return c == '"' || c == '\\' || static_cast<unsigned char>(c) < 0x20;
+}
+
 inline std::string escape(const std::string& s) {
+    // Fast path: nearly every string we serialize (tickers, labels) needs no escaping at all, so
+    // return it unchanged instead of rebuilding it character by character.
+    std::size_t i = 0;
+    while (i < s.size() && !needs_escape(s[i])) ++i;
+    if (i == s.size()) return s;
+
     std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
+    out.reserve(s.size() + 8);
+    out.append(s, 0, i);
+    for (; i < s.size(); ++i) {
+        const char c = s[i];
         switch (c) {
             case '"': out += "\\\""; break;
             case '\\': out += "\\\\"; break;

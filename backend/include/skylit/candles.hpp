@@ -38,19 +38,23 @@ struct Candle {
 // Shared by every interval the UI offers (1m/5m/15m/1h/1D) — one function,
 // not per-interval special-casing, so "switching timeframe" (Part C.2)
 // always produces a genuinely re-bucketed series from the same tick source.
-inline std::vector<Candle> aggregate_candles(const std::deque<PriceTick>& ticks,
-                                              std::int64_t interval_seconds) {
+inline std::int64_t candle_bucket_start(std::int64_t t, std::int64_t interval_seconds) {
+    return (t / interval_seconds) * interval_seconds;
+}
+
+// The one aggregation loop, over any [first, last) range of ticks. Both the full series and the
+// "latest N bars" fast path below go through THIS function, so they cannot drift apart.
+template <class It>
+inline std::vector<Candle> aggregate_candles_range(It first, It last, std::int64_t interval_seconds) {
     std::vector<Candle> out;
-    if (ticks.empty() || interval_seconds <= 0) return out;
+    if (first == last || interval_seconds <= 0) return out;
 
-    auto bucket_start = [&](std::int64_t t) { return (t / interval_seconds) * interval_seconds; };
+    std::int64_t current_bucket = candle_bucket_start(first->epoch_seconds, interval_seconds);
+    Candle c{current_bucket, first->price, first->price, first->price, first->price};
 
-    std::int64_t current_bucket = bucket_start(ticks.front().epoch_seconds);
-    Candle c{current_bucket, ticks.front().price, ticks.front().price, ticks.front().price,
-              ticks.front().price};
-
-    for (const auto& tick : ticks) {
-        std::int64_t b = bucket_start(tick.epoch_seconds);
+    for (; first != last; ++first) {
+        const PriceTick& tick = *first;
+        std::int64_t b = candle_bucket_start(tick.epoch_seconds, interval_seconds);
         if (b != current_bucket) {
             out.push_back(c);
             current_bucket = b;
@@ -62,6 +66,35 @@ inline std::vector<Candle> aggregate_candles(const std::deque<PriceTick>& ticks,
     }
     out.push_back(c);
     return out;
+}
+
+inline std::vector<Candle> aggregate_candles(const std::deque<PriceTick>& ticks,
+                                              std::int64_t interval_seconds) {
+    return aggregate_candles_range(ticks.begin(), ticks.end(), interval_seconds);
+}
+
+// Exactly the last `count` candles of aggregate_candles(ticks, interval_seconds) (or all of them if
+// there are fewer), without aggregating the whole history: walk back from the newest tick to the
+// first tick of the count-th most recent bucket run, then aggregate just that tail. A run boundary
+// is "bucket changed between adjacent ticks" - the same rule the full loop uses - so the tail's
+// candles (including the open of the first one) are identical to the full series' last `count`.
+inline std::vector<Candle> aggregate_candles_tail(const std::deque<PriceTick>& ticks,
+                                                   std::int64_t interval_seconds, std::size_t count) {
+    if (ticks.empty() || interval_seconds <= 0 || count == 0) return {};
+    std::size_t start = ticks.size() - 1;
+    std::int64_t current = candle_bucket_start(ticks[start].epoch_seconds, interval_seconds);
+    std::size_t runs = 1;
+    while (start > 0) {
+        const std::int64_t b = candle_bucket_start(ticks[start - 1].epoch_seconds, interval_seconds);
+        if (b != current) {
+            if (runs == count) break;
+            ++runs;
+            current = b;
+        }
+        --start;
+    }
+    return aggregate_candles_range(ticks.begin() + static_cast<std::ptrdiff_t>(start), ticks.end(),
+                                   interval_seconds);
 }
 
 struct DarkPoolLevel {

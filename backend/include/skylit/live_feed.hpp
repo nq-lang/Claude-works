@@ -158,7 +158,8 @@ public:
         // ~0% until real drift accumulated.)
         for (const auto& t : tickers_) {
             auto it = session_open_snap_.find(t.ticker + "|0dte");
-            if (it != session_open_snap_.end()) session_baseline_[t.ticker] = it->second.v;
+            if (it != session_open_snap_.end())
+                session_baseline_[t.ticker] = std::unordered_map<double, double>(it->second.v.begin(), it->second.v.end());
         }
         last_history_append_ = now;
     }
@@ -315,6 +316,10 @@ public:
         for (const auto& bucket : vr.buckets) {
             const engine::HeatmapBoard* b = store_.get_board(ticker, bucket);
             if (!b) continue;
+            if (cur.empty()) {  // one allocation up front instead of a rehash cascade while filling
+                cur.reserve(b->nodes.size() * 2);
+                ref.reserve(b->nodes.size() * 2);
+            }
             for (const auto& n : b->nodes)
                 cur[n.strike] += engine::greek_mask_value(vr.greek_mask, n.exposure, n.strike);
 
@@ -344,8 +349,10 @@ public:
         for (auto& n : board.nodes) {
             n.velocity_pct = 0.0;
             n.velocity_new = false;
-            const double c = std::abs(cur.count(n.strike) ? cur[n.strike] : 0.0);
-            const double r = std::abs(ref.count(n.strike) ? ref[n.strike] : 0.0);
+            const auto ci = cur.find(n.strike);  // one hash lookup each (was count() + operator[])
+            const auto ri = ref.find(n.strike);
+            const double c = std::abs(ci != cur.end() ? ci->second : 0.0);
+            const double r = std::abs(ri != ref.end() ? ri->second : 0.0);
             if (r < 1e-9) {
                 n.velocity_new = c > 1e-9;
             } else {
@@ -386,9 +393,13 @@ public:
     std::vector<market::Candle> latest_candles(const std::string& ticker,
                                                 std::int64_t interval_seconds,
                                                 int count = 2) const {
-        auto full = candles(ticker, interval_seconds);
-        if (static_cast<int>(full.size()) <= count) return full;
-        return std::vector<market::Candle>(full.end() - count, full.end());
+        if (count <= 0) return {};
+        std::lock_guard lock(mutex_);
+        auto it = tick_history_.find(ticker);
+        if (it == tick_history_.end()) return {};
+        // Only the newest `count` bars are needed: aggregate just that tail (see candles.hpp) rather
+        // than the whole 24h history on every 1s poll of every chart pane.
+        return market::aggregate_candles_tail(it->second, interval_seconds, static_cast<std::size_t>(count));
     }
 
     std::vector<market::DarkPoolLevel> dark_pool(const std::string& ticker) {
@@ -414,13 +425,32 @@ public:
 private:
     struct ExposureSnap {
         std::int64_t t = 0;
-        std::unordered_map<double, double> v;  // strike -> raw (GEX-series) exposure
+        // strike -> raw (GEX-series) exposure, strike-ascending and unique. A flat vector instead of
+        // a hash map: ~200 keys x 130 snapshots of these are kept, and every use either iterates the
+        // whole snapshot or sums it per strike (order-independent), so this is ~4x smaller and
+        // allocation-free per element without changing a single result.
+        std::vector<std::pair<double, double>> v;
     };
+
+    // Establishes ExposureSnap::v's invariant (sorted, one entry per strike, LAST write wins - the
+    // semantics the previous map-assignment had).
+    static void normalize_snap(std::vector<std::pair<double, double>>& v) {
+        auto by_strike = [](const auto& a, const auto& b) { return a.first < b.first; };
+        if (!std::is_sorted(v.begin(), v.end(), by_strike)) std::stable_sort(v.begin(), v.end(), by_strike);
+        std::size_t w = 0;
+        for (std::size_t r = 0; r < v.size(); ++r) {
+            if (w > 0 && v[w - 1].first == v[r].first) v[w - 1] = v[r];
+            else v[w++] = v[r];
+        }
+        v.resize(w);
+    }
 
     static ExposureSnap snap_of(const engine::HeatmapBoard& b, std::int64_t t) {
         ExposureSnap s;
         s.t = t;
-        for (const auto& n : b.nodes) s.v[n.strike] = n.exposure;
+        s.v.reserve(b.nodes.size());
+        for (const auto& n : b.nodes) s.v.emplace_back(n.strike, n.exposure);
+        normalize_snap(s.v);
         return s;
     }
 
@@ -446,8 +476,9 @@ private:
             for (const auto& n : b.nodes) {
                 if (unit(rng) < absent_fraction) continue;  // strike had no exposure back then
                 double factor = std::exp(-trend[n.strike] * minutes) * (1.0 + noise(rng) * extra_noise);
-                s.v[n.strike] = n.exposure * factor;
+                s.v.emplace_back(n.strike, n.exposure * factor);
             }
+            normalize_snap(s.v);
             return s;
         };
 
