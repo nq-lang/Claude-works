@@ -82,29 +82,34 @@ struct HttpRequest {
     std::string query;             // percent-decoded query string (may be empty)
     std::unordered_map<std::string, std::string> headers;  // lower-cased names
     std::string body;
+    std::string version;           // "HTTP/1.1" ...
 };
 
 struct HttpResponse {
     int status = 200;
     std::string content_type = "text/plain; charset=utf-8";
     std::string body;
+    std::string etag;  // optional validator (static files); enables 304 Not Modified
 
     static HttpResponse json(std::string body_json, int status = 200) {
         return HttpResponse{.status = status,
                              .content_type = "application/json; charset=utf-8",
-                             .body = std::move(body_json)};
+                             .body = std::move(body_json),
+                             .etag = {}};
     }
 
     static HttpResponse not_found() {
         return HttpResponse{.status = 404,
                              .content_type = "text/plain; charset=utf-8",
-                             .body = "404 Not Found"};
+                             .body = "404 Not Found",
+                             .etag = {}};
     }
 
     static HttpResponse error(int status, std::string_view text) {
         return HttpResponse{.status = status,
                              .content_type = "text/plain; charset=utf-8",
-                             .body = std::string(text)};
+                             .body = std::string(text),
+                             .etag = {}};
     }
 };
 
@@ -121,8 +126,11 @@ public:
     static constexpr std::size_t kMaxHeaderBytes = 64 * 1024;
     static constexpr std::size_t kMaxBodyBytes = 1024 * 1024;
     static constexpr int kMaxConnections = 256;
-    static constexpr int kIoTimeoutSeconds = 5;        // per recv()/send() call
-    static constexpr int kRequestDeadlineSeconds = 10;  // whole request must arrive by then
+    static constexpr int kIoTimeoutSeconds = 1;         // per recv()/send() call (loops re-check deadlines / shutdown)
+    static constexpr int kRequestDeadlineSeconds = 10;  // once a request has started, all of it must arrive by then
+    static constexpr int kFirstRequestIdleSeconds = 5;  // a new connection must send something within this
+    static constexpr int kKeepAliveIdleSeconds = 30;    // an idle persistent connection is closed after this
+    static constexpr int kMaxRequestsPerConnection = 1000;
 
     HttpServer(uint16_t port, fs::path web_root, std::string bind_host = "127.0.0.1")
         : port_(port), web_root_(std::move(web_root)), bind_host_(std::move(bind_host)) {}
@@ -272,6 +280,7 @@ private:
         if (method.empty() || target.empty() || !version.starts_with("HTTP/")) return std::nullopt;
         if (target.front() != '/') return std::nullopt;
         req.method = std::string(method);
+        req.version = std::string(version);
 
         if (auto qpos = target.find('?'); qpos != std::string_view::npos) {
             req.path = std::string(target.substr(0, qpos));
@@ -369,15 +378,32 @@ private:
         auto resolved = resolve_static_path(req.path);
         std::error_code ec;
         if (!resolved || !fs::is_regular_file(*resolved, ec)) return HttpResponse::not_found();
+        // Validator = size + mtime. A reload then costs a 304 per asset instead of re-sending ~200 KB.
+        const auto size = fs::file_size(*resolved, ec);
+        std::string etag;
+        if (!ec) {
+            const auto mtime = fs::last_write_time(*resolved, ec);
+            if (!ec)
+                etag = std::format("\"{:x}-{:x}\"", static_cast<unsigned long long>(size),
+                                    static_cast<unsigned long long>(mtime.time_since_epoch().count()));
+        }
+        if (!etag.empty()) {
+            if (auto it = req.headers.find("if-none-match"); it != req.headers.end()) {
+                std::string_view theirs = it->second;
+                if (theirs.starts_with("W/")) theirs.remove_prefix(2);
+                if (theirs == etag)
+                    return HttpResponse{.status = 304, .content_type = std::string(mime_type_for(*resolved)), .body = {}, .etag = etag};
+            }
+        }
         std::ifstream file(*resolved, std::ios::binary);
         if (!file) return HttpResponse::not_found();
         std::string contents;
-        auto size = fs::file_size(*resolved, ec);
-        if (!ec) contents.reserve(static_cast<std::size_t>(size));
+        if (size > 0) contents.reserve(static_cast<std::size_t>(size));
         contents.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
         return HttpResponse{.status = 200,
                              .content_type = std::string(mime_type_for(*resolved)),
-                             .body = std::move(contents)};
+                             .body = std::move(contents),
+                             .etag = std::move(etag)};
     }
 
     static void set_socket_timeouts(int fd) {
@@ -391,35 +417,49 @@ private:
 
     enum class ReadStatus { Ok, Closed, TooLarge, BadRequest, Timeout };
 
-    // Reads one request (head + Content-Length body) from the socket.
-    static ReadStatus read_request(int fd, HttpRequest& out) {
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(kRequestDeadlineSeconds);
-        std::string buf;
-        buf.reserve(2048);
-        std::size_t head_end = std::string::npos;
+    // Reads one request (head + Content-Length body). `buf` carries bytes received beyond the previous
+    // request on this connection (pipelining) and is left holding any bytes beyond this one.
+    // `idle_limit_s` bounds the wait for the first byte; once a request has started, all of it must
+    // arrive within kRequestDeadlineSeconds. An idle expiry on a kept-alive connection is a silent
+    // Closed (the client simply stopped using it); on a new connection it is a Timeout (-> 408).
+    static ReadStatus read_request(int fd, std::string& buf, HttpRequest& out, int idle_limit_s, bool first) {
+        using clock = std::chrono::steady_clock;
+        const auto idle_deadline = clock::now() + std::chrono::seconds(idle_limit_s);
+        std::optional<clock::time_point> deadline;
+        if (!buf.empty()) deadline = clock::now() + std::chrono::seconds(kRequestDeadlineSeconds);
         char chunk[8192];
 
-        while (head_end == std::string::npos) {
-            if (std::chrono::steady_clock::now() > deadline) return ReadStatus::Timeout;
+        // Pulls more bytes into buf, enforcing the deadlines. Returns Ok when data was appended.
+        auto fill = [&]() -> ReadStatus {
+            const auto now = clock::now();
+            if (buf.empty() && stop_requested().load()) return ReadStatus::Closed;
+            if (deadline ? now > *deadline : now > idle_deadline)
+                return (buf.empty() && !first) ? ReadStatus::Closed : ReadStatus::Timeout;
             ssize_t n = ::recv(fd, chunk, sizeof(chunk), 0);
             if (n == 0) return buf.empty() ? ReadStatus::Closed : ReadStatus::BadRequest;
             if (n < 0) {
-                if (errno == EINTR) continue;
-                // SO_RCVTIMEO expiry surfaces as EAGAIN (== EWOULDBLOCK on Linux/macOS).
-                return errno == EAGAIN ? ReadStatus::Timeout : ReadStatus::Closed;
+                // SO_RCVTIMEO expiry surfaces as EAGAIN (== EWOULDBLOCK on Linux/macOS): just re-check.
+                if (errno == EINTR || errno == EAGAIN) return ReadStatus::Ok;
+                return ReadStatus::Closed;
             }
             buf.append(chunk, static_cast<std::size_t>(n));
-            // The terminator may be CRLFCRLF or bare LFLF (be lenient like the old parser).
-            auto crlf = buf.find("\r\n\r\n");
-            auto lf = buf.find("\n\n");
-            if (crlf != std::string::npos && (lf == std::string::npos || crlf < lf)) {
-                head_end = crlf + 4;
-            } else if (lf != std::string::npos) {
-                head_end = lf + 2;
-            } else if (buf.size() > kMaxHeaderBytes) {
-                return ReadStatus::TooLarge;
-            }
+            if (!deadline) deadline = now + std::chrono::seconds(kRequestDeadlineSeconds);
+            return ReadStatus::Ok;
+        };
+        // The terminator may be CRLFCRLF or bare LFLF (be lenient like the original parser).
+        auto head_end_of = [&]() -> std::size_t {
+            const auto crlf = buf.find("\r\n\r\n");
+            const auto lf = buf.find("\n\n");
+            if (crlf != std::string::npos && (lf == std::string::npos || crlf < lf)) return crlf + 4;
+            if (lf != std::string::npos) return lf + 2;
+            return std::string::npos;
+        };
+
+        std::size_t head_end = head_end_of();
+        while (head_end == std::string::npos) {
+            if (buf.size() > kMaxHeaderBytes) return ReadStatus::TooLarge;
+            if (auto st = fill(); st != ReadStatus::Ok) return st;
+            head_end = head_end_of();
         }
         if (head_end > kMaxHeaderBytes) return ReadStatus::TooLarge;
 
@@ -434,64 +474,72 @@ private:
             if (ec != std::errc{} || ptr != v.data() + v.size()) return ReadStatus::BadRequest;
             if (body_len > kMaxBodyBytes) return ReadStatus::TooLarge;
         }
-        out.body.assign(buf, head_end, std::string::npos);
-        while (out.body.size() < body_len) {
-            if (std::chrono::steady_clock::now() > deadline) return ReadStatus::Timeout;
-            ssize_t n = ::recv(fd, chunk, sizeof(chunk), 0);
-            if (n == 0) return ReadStatus::BadRequest;
-            if (n < 0) {
-                if (errno == EINTR) continue;
-                return ReadStatus::Timeout;
-            }
-            out.body.append(chunk, static_cast<std::size_t>(n));
+        while (buf.size() < head_end + body_len) {
+            if (auto st = fill(); st != ReadStatus::Ok) return st == ReadStatus::Closed ? ReadStatus::BadRequest : st;
         }
-        out.body.resize(body_len);
+        out.body.assign(buf, head_end, body_len);
+        buf.erase(0, head_end + body_len);
         return ReadStatus::Ok;
+    }
+
+    // HTTP/1.1 is persistent unless "Connection: close"; HTTP/1.0 only with "Connection: keep-alive".
+    static bool wants_keep_alive(const HttpRequest& req) {
+        std::string conn;
+        if (auto it = req.headers.find("connection"); it != req.headers.end()) {
+            conn = it->second;
+            std::ranges::transform(conn, conn.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        }
+        if (req.version == "HTTP/1.0") return conn.find("keep-alive") != std::string::npos;
+        return conn.find("close") == std::string::npos;
+    }
+
+    HttpResponse dispatch(const HttpRequest& req) const {
+        try {
+            if (auto it = routes_.find({req.method, req.path}); it != routes_.end()) return it->second(req);
+            if (req.method == "GET") return serve_static(req);
+            return HttpResponse::not_found();
+        } catch (const std::exception& e) {
+            std::cerr << std::format("[skylit] handler error on {} {}: {}\n", req.method, req.path, e.what());
+        } catch (...) {
+            std::cerr << std::format("[skylit] handler error on {} {}: unknown exception\n", req.method, req.path);
+        }
+        return HttpResponse::json(R"({"error":"internal server error"})", 500);
     }
 
     void handle_connection(int client_fd) const noexcept {
         try {
             set_socket_timeouts(client_fd);
-
-            HttpRequest req;
-            switch (read_request(client_fd, req)) {
-                case ReadStatus::Ok: break;
-                case ReadStatus::Closed: return;  // client went away / idle connection closed
-                case ReadStatus::Timeout: send_response(client_fd, HttpResponse::error(408, "408 Request Timeout")); return;
-                case ReadStatus::TooLarge: send_response(client_fd, HttpResponse::error(413, "413 Payload Too Large")); return;
-                case ReadStatus::BadRequest: send_response(client_fd, HttpResponse::error(400, "400 Bad Request")); return;
-            }
-
-            HttpResponse resp;
-            try {
-                if (auto it = routes_.find({req.method, req.path}); it != routes_.end()) {
-                    resp = it->second(req);
-                } else if (req.method == "GET") {
-                    resp = serve_static(req);
-                } else {
-                    resp = HttpResponse::not_found();
+            std::string buf;
+            buf.reserve(2048);
+            for (int served = 0; served < kMaxRequestsPerConnection; ++served) {
+                HttpRequest req;
+                const bool first = served == 0;
+                switch (read_request(client_fd, buf, req, first ? kFirstRequestIdleSeconds : kKeepAliveIdleSeconds, first)) {
+                    case ReadStatus::Ok: break;
+                    case ReadStatus::Closed: return;  // client went away / idle connection expired
+                    case ReadStatus::Timeout: send_response(client_fd, HttpResponse::error(408, "408 Request Timeout"), false); return;
+                    case ReadStatus::TooLarge: send_response(client_fd, HttpResponse::error(413, "413 Payload Too Large"), false); return;
+                    case ReadStatus::BadRequest: send_response(client_fd, HttpResponse::error(400, "400 Bad Request"), false); return;
                 }
-            } catch (const std::exception& e) {
-                std::cerr << std::format("[skylit] handler error on {} {}: {}\n", req.method, req.path, e.what());
-                resp = HttpResponse::json(R"({"error":"internal server error"})", 500);
-            } catch (...) {
-                std::cerr << std::format("[skylit] handler error on {} {}: unknown exception\n", req.method, req.path);
-                resp = HttpResponse::json(R"({"error":"internal server error"})", 500);
+                const HttpResponse resp = dispatch(req);
+                const bool keep = wants_keep_alive(req) && served + 1 < kMaxRequestsPerConnection && !stop_requested().load();
+                send_response(client_fd, resp, keep);
+                if (!keep) return;
             }
-            send_response(client_fd, resp);
         } catch (...) {
             // A connection thread must never let an exception escape (it would terminate the process).
         }
     }
 
-    static void send_response(int fd, const HttpResponse& resp) {
+    static void send_response(int fd, const HttpResponse& resp, bool keep_alive) {
         const bool is_api = resp.content_type.starts_with("application/json");
-        std::string out = std::format(
-            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n"
-            "X-Content-Type-Options: nosniff\r\nCache-Control: {}\r\n\r\n",
-            resp.status, status_text(resp.status), resp.content_type, resp.body.size(),
-            is_api ? "no-store" : "no-cache");
-        out += resp.body;
+        std::string out = std::format("HTTP/1.1 {} {}\r\nContent-Type: {}\r\n", resp.status, status_text(resp.status), resp.content_type);
+        if (resp.status != 304) out += std::format("Content-Length: {}\r\n", resp.body.size());  // a 304 has no body
+        if (!resp.etag.empty()) out += std::format("ETag: {}\r\n", resp.etag);
+        out += std::format("X-Content-Type-Options: nosniff\r\nCache-Control: {}\r\n", is_api ? "no-store" : "no-cache");
+        out += keep_alive ? std::format("Connection: keep-alive\r\nKeep-Alive: timeout={}, max={}\r\n\r\n", kKeepAliveIdleSeconds, kMaxRequestsPerConnection)
+                          : std::string("Connection: close\r\n\r\n");
+        if (resp.status != 304) out += resp.body;
         write_all(fd, out.data(), out.size());
     }
 
@@ -510,6 +558,7 @@ private:
     static std::string_view status_text(int status) {
         switch (status) {
             case 200: return "OK";
+            case 304: return "Not Modified";
             case 400: return "Bad Request";
             case 404: return "Not Found";
             case 408: return "Request Timeout";
