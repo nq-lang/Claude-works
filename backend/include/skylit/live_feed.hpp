@@ -549,40 +549,44 @@ private:
         // the ticker, rather than running kMaxNextExpirations+1 independent
         // random walks that would drift apart from each other nonsensically.
         while (running_) {
-            {
-                std::lock_guard lock(mutex_);
-                auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                               std::chrono::system_clock::now().time_since_epoch())
-                               .count();
-                for (const auto& t : tickers_) {
-                    auto* primary = store_.get_board_mut(t.ticker, "0dte");
-                    if (!primary) continue;
-                    double old_spot = primary->spot;
-                    source_.tick_price(*primary);
-                    double new_spot = primary->spot;
+            tick_prices_once();
+            interruptible_sleep(std::chrono::seconds(1));
+        }
+    }
 
-                    // Freshness/retest decay (this feature): every bucket's
-                    // nodes get touch_count bumped when the tick crossed
-                    // their strike — applied per-bucket since each
-                    // expiration's node set is independent data, not just
-                    // the "0dte" board.
-                    for (const auto& bucket : all_expiration_buckets()) {
-                        auto* b = store_.get_board_mut(t.ticker, bucket);
-                        if (!b) continue;
-                        if (bucket != "0dte") b->spot = new_spot;
-                        for (auto& node : b->nodes) {
-                            if (crossed(old_spot, new_spot, node.strike)) ++node.touch_count;
-                        }
-                    }
+    // One price tick for every ticker: the body of price_loop(), moved here unchanged so a
+    // deterministic test can drive it without threads or sleeping.
+    void tick_prices_once() {
+        std::lock_guard lock(mutex_);
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+        for (const auto& t : tickers_) {
+            auto* primary = store_.get_board_mut(t.ticker, "0dte");
+            if (!primary) continue;
+            double old_spot = primary->spot;
+            source_.tick_price(*primary);
+            double new_spot = primary->spot;
 
-                    auto& history = tick_history_[t.ticker];
-                    history.push_back(market::PriceTick{now, new_spot});
-                    // Bound memory: cap at 24h of 1s ticks per ticker.
-                    constexpr std::size_t kMaxTicks = 24 * 3600;
-                    while (history.size() > kMaxTicks) history.pop_front();
+            // Freshness/retest decay (this feature): every bucket's
+            // nodes get touch_count bumped when the tick crossed
+            // their strike — applied per-bucket since each
+            // expiration's node set is independent data, not just
+            // the "0dte" board.
+            for (const auto& bucket : all_expiration_buckets()) {
+                auto* b = store_.get_board_mut(t.ticker, bucket);
+                if (!b) continue;
+                if (bucket != "0dte") b->spot = new_spot;
+                for (auto& node : b->nodes) {
+                    if (crossed(old_spot, new_spot, node.strike)) ++node.touch_count;
                 }
             }
-            interruptible_sleep(std::chrono::seconds(1));
+
+            auto& history = tick_history_[t.ticker];
+            history.push_back(market::PriceTick{now, new_spot});
+            // Bound memory: cap at 24h of 1s ticks per ticker.
+            constexpr std::size_t kMaxTicks = 24 * 3600;
+            while (history.size() > kMaxTicks) history.pop_front();
         }
     }
 
@@ -610,33 +614,39 @@ private:
         while (running_) {
             interruptible_sleep(std::chrono::seconds(10));
             if (!running_) break;
-            std::lock_guard lock(mutex_);
-            const auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                                 std::chrono::system_clock::now().time_since_epoch()).count();
-            const bool append_history = now - last_history_append_ >= 60;
-            for (const auto& t : tickers_) {
-                const bool rolled = maybe_roll_session_baseline(t.ticker);
-                for (const auto& bucket : all_expiration_buckets()) {
-                    if (auto* b = store_.get_board_mut(t.ticker, bucket)) {
-                        if (rolled) {
-                            // New trading period: yesterday's session-open
-                            // becomes the previous-close reference, and
-                            // session velocity restarts from 0.
-                            const std::string key = t.ticker + "|" + bucket;
-                            prev_close_snap_[key] = snap_of(*b, now);
-                            session_open_snap_[key] = snap_of(*b, now);
-                        }
-                        source_.refresh_exposure(*b);
-                        if (append_history) {
-                            auto& h = exposure_history_[t.ticker + "|" + bucket];
-                            h.push_back(snap_of(*b, now));
-                            while (h.size() > 130) h.pop_front();
-                        }
+            refresh_exposures_once();
+        }
+    }
+
+    // One exposure refresh for every ticker x bucket: the body of exposure_loop(), moved here
+    // unchanged for deterministic testing.
+    void refresh_exposures_once() {
+        std::lock_guard lock(mutex_);
+        const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                             std::chrono::system_clock::now().time_since_epoch()).count();
+        const bool append_history = now - last_history_append_ >= 60;
+        for (const auto& t : tickers_) {
+            const bool rolled = maybe_roll_session_baseline(t.ticker);
+            for (const auto& bucket : all_expiration_buckets()) {
+                if (auto* b = store_.get_board_mut(t.ticker, bucket)) {
+                    if (rolled) {
+                        // New trading period: yesterday's session-open
+                        // becomes the previous-close reference, and
+                        // session velocity restarts from 0.
+                        const std::string key = t.ticker + "|" + bucket;
+                        prev_close_snap_[key] = snap_of(*b, now);
+                        session_open_snap_[key] = snap_of(*b, now);
+                    }
+                    source_.refresh_exposure(*b);
+                    if (append_history) {
+                        auto& h = exposure_history_[t.ticker + "|" + bucket];
+                        h.push_back(snap_of(*b, now));
+                        while (h.size() > 130) h.pop_front();
                     }
                 }
             }
-            if (append_history) last_history_append_ = now;
         }
+        if (append_history) last_history_append_ = now;
     }
 
     std::vector<TickerConfig> tickers_;
