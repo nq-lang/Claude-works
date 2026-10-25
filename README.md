@@ -1,35 +1,14 @@
-# Claude-works — Skylit Heatseeker Terminal
+Skylit Heatseeker Terminal
 
-A dealer-positioning trading terminal: a dependency-free **C++23 backend** (exposure / Greek /
+dealer-positioning trading terminal: a dependency-free **C++23 backend**.
+
 projection engine + HTTP API) serving a static **browser frontend** (Atlas chart with Orbs,
+
 Projections and Expiry Data windows, live heatmaps, Quadrinity multi-heatmap view).
 
-> Market data is **synthetic** (a seeded generator stands in for a vendor feed) until a real
-> feed is connected — see `docs/CHANGES.md`.
+> Market data is **synthetic** (a seeded generator stands in for a vendor feed) until a real > feed is connected — see `docs/CHANGES.md`.
 
-## Layout
-
-```
-backend/
-  src/main.cpp                  entry point, argument parsing, API route table
-  include/skylit/
-    http_server.hpp             HTTP/1.1 transport (thread-per-connection, keep-alive, ETag/304, limits)
-    exposure_engine.hpp         exposure / node / King-Node / confluence engine
-    projection_engine.hpp       Atlas Projections engine
-    live_feed.hpp               background price + exposure refresh, snapshots
-    candles.hpp                 tick history -> candles, dark pool, flow
-    json_serialize.hpp          JSON output
-frontend/                       static web root (index.html + js/*.js)
-tests/
-  backend/                      engine unit tests, API smoke test, stress / sanitizer scripts
-  e2e/                          Playwright browser suites + test stubs
-scripts/                        setup.sh, run.sh
-docs/                           ARCHITECTURE, TESTING, VERIFICATION, OPTIMIZATION, LIVE_SHARE, CHANGES, screenshots/
-.vscode/                        tasks, launch (gdb), IntelliSense config
-.devcontainer/                  Codespaces / dev container
-Makefile                        g++ build driver
-```
-
+##
 ## Build and run
 
 Requirements: **g++ >= 13** (C++23) and `make`. No other dependencies.
@@ -64,9 +43,4 @@ Full guide, troubleshooting and security notes: [docs/LIVE_SHARE.md](docs/LIVE_S
 
 | Doc | Contents |
 |---|---|
-| [docs/LIVE_SHARE.md](docs/LIVE_SHARE.md) | sharing the terminal over Live Share |
-| [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md) | measured before/after performance, proof the math is unchanged |
-| [docs/VERIFICATION.md](docs/VERIFICATION.md) | issues found/fixed, checks run, limitations |
-| [docs/TESTING.md](docs/TESTING.md) | test matrix and procedures |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | design |
-| [docs/CHANGES.md](docs/CHANGES.md) | feature change log |
+| [docs/LIVE_SHARE.md](d
