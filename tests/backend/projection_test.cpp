@@ -107,7 +107,7 @@ int main() {
         auto m = build_projection(rq, cfg, make_provider());
         CHECK(g.gex_share == 1.0, "GEX-only: gamma share 1.0");
         CHECK(v.gex_share == 0.0, "VEX-only: gamma share 0.0");
-        CHECK(m.gex_share == cfg.gex_share_by_dte[dte], "GEX+VEX uses the per-dte gamma/vanna table");
+        CHECK(m.gex_share == cfg.gex_share_by_dte[static_cast<std::size_t>(dte)], "GEX+VEX uses the per-dte gamma/vanna table");
         CHECK(v.regime_factor == 1.0, "VEX-only carries no gamma-regime width scaling");
     }
     CHECK(cfg.gex_share_by_dte[0] > cfg.gex_share_by_dte[5], "near-dated (0DTE) leans gamma more than far-dated (5DTE)");

@@ -5,6 +5,26 @@ verified in a Codespaces-equivalent environment before being considered
 done — not just "it ran on my machine." This is the repeatable procedure,
 and it must be re-run for every future change.
 
+## Test matrix (current)
+
+All run from the repository root with g++ >= 13. See [VERIFICATION.md](VERIFICATION.md) for the
+latest results and limitations.
+
+| Command | What it covers | Needs |
+|---|---|---|
+| `make` | release build, `-Wall -Wextra -Wpedantic`, must be warning-free | g++ 13 |
+| `make test-unit` | engine unit tests (224), candle-tail property test (1.89 M cases), JSON-escape property test (400 k cases) | g++ |
+| `make test-smoke` | fresh server + API contract checks, traversal, 404s, Atlas Projections routes | curl |
+| `make test` | `test-unit` + `test-smoke` | |
+| `make golden` | **backend math is bit-identical** to the original (hex-float dump under a fake clock) | g++ |
+| `make test-sanitize` | hostile-input / concurrency / keep-alive probe under ASan+UBSan and TSan | g++, python3 |
+| `make test-e2e` | 8 Playwright suites (all pages, heatmaps, projections, slow-link resilience, **two simultaneous viewers**) + 30 s soak and backend-restart test | python3, `pip install playwright`, Chromium |
+| `make bench` | backend micro-benchmarks (before/after numbers: [OPTIMIZATION.md](OPTIMIZATION.md)) | g++ |
+| `python3 tests/backend/bench/http_bench.py PORT` | keep-alive / conditional-request transport benchmark against a running server | python3 |
+
+Browser suites stub the chart library (no network egress in the build environment); see the caveat
+below. `SKYLIT_CHROMIUM=/path/to/chromium` points Playwright at a specific browser.
+
 ## What "Codespaces-equivalent" means here
 
 The GitHub Codespaces default image is Ubuntu 24.04 ("noble") with g++-13

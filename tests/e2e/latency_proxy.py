@@ -24,6 +24,7 @@ class LatencyProxy:
         self.active = 0
         self.active_by_path = {}
         self.peak_by_path = {}
+        self.upstream_status = []  # (path, status) of every upstream reply, in order
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -52,9 +53,13 @@ class LatencyProxy:
                 try:
                     conn = http.client.HTTPConnection("127.0.0.1", outer.upstream_port, timeout=20)
                     # Preserve the guest-facing Host header, as Live Share's forwarder would.
-                    conn.request("GET", self.path, headers={"Host": self.headers.get("Host", "")})
+                    fwd = {"Host": self.headers.get("Host", "")}
+                    if self.headers.get("If-None-Match"):  # a real forwarder passes validators through
+                        fwd["If-None-Match"] = self.headers["If-None-Match"]
+                    conn.request("GET", self.path, headers=fwd)
                     resp = conn.getresponse()
                     body = resp.read()
+                    outer.upstream_status.append((self.path.split("?", 1)[0], resp.status))
                     self.send_response(resp.status)
                     for k, v in resp.getheaders():
                         if k.lower() not in ("transfer-encoding", "connection", "content-length"):

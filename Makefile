@@ -20,13 +20,19 @@
 # `make CXX=g++-13`). C++23 (std::expected, <format>) needs GCC >= 13.
 
 CXX       := g++
-STD       := -std=c++23
+# -ffp-contract=off: never fuse a*b+c into an FMA. x86-64 (no -march=native) has no FMA so this is
+# a no-op there, but GCC defaults to -ffp-contract=fast on aarch64/ppc, which would change the
+# last bits of the Greek/exposure maths. Pinning it keeps results identical on every platform and
+# matches the flags the golden regression harness (tests/backend/golden) is built with.
+FP        := -ffp-contract=off
+STD       := -std=c++23 $(FP)
 WARN      := -Wall -Wextra -Wpedantic
 INCLUDES  := -Ibackend/include
 DEPFLAGS   = -MMD -MP
 LDFLAGS   := -pthread
 
-# Release: -O2 is the measured sweet spot for this workload (see docs/OPTIMIZATION.md).
+# Release: -O2. -O3 was measured and is not a clear win (mixed +/-10%, larger binary): see
+# docs/OPTIMIZATION.md.
 # No -march=native / -ffast-math: the binary stays portable and the floating-point
 # results stay bit-for-bit reproducible.
 OPT_RELEASE := -O2
