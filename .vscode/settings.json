@@ -1,0 +1,10 @@
+{
+  "C_Cpp.default.cppStandard": "c++23",
+  "C_Cpp.default.includePath": ["${workspaceFolder}/backend/include"],
+  "C_Cpp.default.compilerPath": "/usr/bin/g++",
+  "files.exclude": { "build": true, ".run": true },
+  "search.exclude": { "build": true, "docs/screenshots": true },
+  "files.associations": { "*.hpp": "cpp" },
+  "editor.formatOnSave": false,
+  "terminal.integrated.cwd": "${workspaceFolder}"
+}

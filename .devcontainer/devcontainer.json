@@ -1,0 +1,56 @@
+{
+  "name": "skylit-heatseeker",
+  // Standard Codespaces universal image: ships g++-13 on Ubuntu 24.04 ("noble").
+  // Pinned by digest-less tag on purpose (Microsoft moves this tag forward with
+  // security patches); the setup script re-verifies g++-13 exists and fails loudly
+  // if a future base image ever drops it, rather than silently building with a
+  // different compiler.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  "features": {
+    // Belt-and-suspenders: explicitly requests a GCC toolchain in case the base
+    // image slips. version "13" pins the major we build/test against (Part A.3).
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+
+  "onCreateCommand": "bash scripts/setup.sh",
+
+  // Inside the container the server binds all interfaces so the forwarder can reach it
+  // (the container's network is private to the Codespace). On a plain machine the default
+  // is 127.0.0.1.
+  "containerEnv": { "SKYLIT_HOST": "0.0.0.0", "SKYLIT_PORT": "8080" },
+
+  "postStartCommand": "bash scripts/run.sh --background",
+
+  // Codespaces "Ports" tab wiring (Part A.5): declare the port so it is
+  // auto-forwarded and labeled the moment the container starts, with no
+  // manual step required in the Ports tab.
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "Skylit Terminal",
+      "onAutoForward": "openPreview",
+      "requireLocalPort": false,
+      "protocol": "http"
+    }
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cmake-tools"
+      ],
+      "settings": {
+        "C_Cpp.default.cppStandard": "c++23",
+        "C_Cpp.default.compilerPath": "/usr/bin/g++"
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

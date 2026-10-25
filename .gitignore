@@ -1,0 +1,33 @@
+# build output / binaries
+build/
+*.o
+*.d
+*.a
+*.so
+*.out
+core
+core.*
+
+# runtime state and logs
+.run/
+*.log
+*.pid
+
+# python / node tooling
+__pycache__/
+*.pyc
+node_modules/
+.pytest_cache/
+
+# editor / OS (the shared .vscode/*.json configs ARE tracked)
+.vscode/*.code-workspace
+.vscode/ipch/
+.idea/
+.DS_Store
+Thumbs.db
+
+# secrets / machine-specific files must never be committed
+.env
+.env.*
+*.pem
+*.key
