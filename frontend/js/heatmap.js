@@ -541,7 +541,22 @@
     fetchAndRender();
     state.pollHandle = setInterval(() => fetchAndRender(true), 2000);
 
+    // pause()/resume(): used by the Atlas sidecar when "Show Heatmap" is OFF so a hidden panel does
+    // no network, parsing or DOM work. Settings/selection are kept; resume() refreshes at once.
+    function pausePolling() {
+      if (state.pollHandle === null) return;
+      clearInterval(state.pollHandle); state.pollHandle = null;
+      renderSeq++;  // drop any reply still in flight: nothing is drawn while hidden
+    }
+    function resumePolling() {
+      if (state.pollHandle !== null) return;
+      fetchAndRender();
+      state.pollHandle = setInterval(() => fetchAndRender(true), 2000);
+    }
+
     return {
+      pause: pausePolling,
+      resume: resumePolling,
       destroy() { clearInterval(state.pollHandle); renderSeq++; lifecycle.abort(); settingsPopover.remove(); dteMenu.remove(); },
       setTicker(t) { state.ticker = t; state.hasRenderedOnce = false; el.tickerSelect.value = t; fetchAndRender(); },
       setGreek(g) { state.greek = g; syncDteUi(); fetchAndRender(); },
