@@ -277,6 +277,10 @@
     margin-left: 6px; background: #0d0d11; border: 1px solid var(--border); color: var(--text-dim);
     font-family: var(--mono); font-size: 10px; padding: 4px 10px; border-radius: 12px; cursor: pointer;
   }
+  .atlas-heatmap-restore-btn {
+    margin-left: 6px; background: #0d0d11; border: 1px solid var(--accent); color: #fff;
+    font-family: var(--mono); font-size: 10px; padding: 4px 10px; border-radius: 12px; cursor: pointer;
+  }
   .atlas-reset-view-btn:hover { border-color: var(--accent); color: #fff; }
 
   main { flex: 1; display: flex; min-height: 0; }
@@ -823,28 +827,28 @@
     // below still lets the user override that at any time.
     const sidecarEl = document.getElementById('sidecar');
     const PANE_WIDTH_PX = 260;
-    createAtlasSidecar(sidecarEl, {
+    const sidecarApi = createAtlasSidecar(sidecarEl, {
       defaultTicker,
       tickerOptions,
       onPaneCountChange(count) {
         sidecarEl.style.width = `${Math.min(count * PANE_WIDTH_PX, window.innerWidth * 0.7)}px`;
       },
       onVisibilityChange(show) {
-        const resizer = document.getElementById('atlas-resizer');
-        resizer.style.display = show ? '' : 'none';
-        if (!show) {
-          sidecarEl.dataset.lastWidth = sidecarEl.style.width || '260px';
-          // Collapse toward the chart, but keep enough width for the
-          // sidecar's own header controls (the "Show Heatmap" checkbox
-          // that toggles this back on) to stay visible and clickable —
-          // display:none-ing the whole container would make its own
-          // re-enable toggle unreachable.
-          sidecarEl.style.width = '150px';
-        } else {
-          sidecarEl.style.width = sidecarEl.dataset.lastWidth || '260px';
-        }
+        // The sidecar itself is display:none while hidden (atlas-sidecar.js), so only the pieces
+        // that live OUTSIDE it need handling: the divider, and the toolbar restore button that
+        // replaces the (now hidden) "Show Heatmap" checkbox. Width is left untouched, so turning
+        // it back on restores exactly the previous split.
+        document.getElementById('atlas-resizer').style.display = show ? '' : 'none';
+        restoreBtn.style.display = show ? 'none' : '';
       },
     });
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'atlas-heatmap-restore-btn';
+    restoreBtn.textContent = '\u25A4 Show heatmap';
+    restoreBtn.title = 'Show the heatmap panel again';
+    restoreBtn.style.display = 'none';
+    restoreBtn.addEventListener('click', () => sidecarApi.setVisible(true));
+    document.getElementById('atlas-layout-controls').appendChild(restoreBtn);
 
     // Resizable divider (this feature): drag to reallocate horizontal
     // space between the chart area and the sidecar heatmap(s). Verified

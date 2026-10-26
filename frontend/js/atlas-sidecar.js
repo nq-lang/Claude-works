@@ -40,6 +40,7 @@
 
     const state = {
       quadrinityMode: false,
+      visible: true,
       paneCount: DEFAULT_PANE_COUNT,
       tickers: [defaultTicker, tickerOptions.find((t) => t !== defaultTicker) || tickerOptions[0]],
       showBadges: false,   // header badges icon: applies to every Atlas heatmap
@@ -64,11 +65,19 @@
       badgesBtn: containerEl.querySelector('.sidecar-badges-btn'),
       panels: containerEl.querySelector('.sidecar-panels'),
     };
-    el.showCheckbox.addEventListener('change', () => {
-      const show = el.showCheckbox.checked;
-      el.panels.style.display = show ? '' : 'none';
+    // LAYOUT STATE: "Show Heatmap" OFF removes the whole sidecar from the layout (display:none, so
+    // the flex chart pane takes the freed width and the chart's ResizeObserver resizes the canvas)
+    // and PAUSES every heatmap panel's polling. A restore control lives in the toolbar (index.html,
+    // via onVisibilityChange) because this header is hidden together with the sidecar.
+    function setVisible(show) {
+      state.visible = show;
+      el.showCheckbox.checked = show;
+      containerEl.style.display = show ? '' : 'none';
+      const panels = state.singlePanel ? [state.singlePanel] : state.panels;
+      panels.forEach((p) => (show ? p.controller.resume() : p.controller.pause()));
       if (opts.onVisibilityChange) opts.onVisibilityChange(show);
-    });
+    }
+    el.showCheckbox.addEventListener('change', () => setVisible(el.showCheckbox.checked));
 
     // --- Quadrinity options popover --------------------------------------
     // Off / 2 / 3 / 4 — a single-select list, same anchored-popover
@@ -191,6 +200,8 @@
         destroyAll();
         popover.remove();
       },
+      setVisible,
+      isVisible() { return state.visible; },
       isQuadrinityMode() { return state.quadrinityMode; },
       getPaneCount() { return state.quadrinityMode ? state.paneCount : 1; },
     };
