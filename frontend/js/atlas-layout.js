@@ -270,6 +270,7 @@
       <button class="atlas-window-settings-btn" title="Window settings">&#9881; Windows</button>
       <button class="atlas-layouts-btn" title="Chart layouts">&#9776; <span class="atlas-layouts-btn-name">Default</span></button>
       <button class="atlas-live-btn">&#9679; Live</button>
+      <button class="atlas-reset-view-btn" title="Reset view: fit all history and return the price axis to automatic scaling">&#10226; Reset view</button>
     `;
 
     // --- Left rail: every charting-feature control, stacked vertically -------
@@ -310,6 +311,7 @@
       layoutsBtn: toolbarEl.querySelector('.atlas-layouts-btn'),
       layoutsBtnName: toolbarEl.querySelector('.atlas-layouts-btn-name'),
       liveBtn: toolbarEl.querySelector('.atlas-live-btn'),
+      resetViewBtn: toolbarEl.querySelector('.atlas-reset-view-btn'),
       intervalBtns: [...railEl.querySelectorAll('.atlas-interval-btn')],
       orbsToggle: railEl.querySelector('.atlas-orbs-toggle'),
       orbsOpen: railEl.querySelector('.atlas-orbs-open'),
@@ -346,6 +348,8 @@
       });
     });
     el.liveBtn.addEventListener('click', () => { forEachPane((c) => c.resumeLive()); });
+    // Explicit view reset (the only non-gesture way back to auto price scale + fitted time axis).
+    el.resetViewBtn.addEventListener('click', () => { forEachPane((c) => c.resetView()); });
 
     // --- Expiry Data window: DTEs 0-6 + Greeks, applied as you click ----------
     const expiryWin = createWindow({

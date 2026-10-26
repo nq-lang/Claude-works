@@ -64,6 +64,10 @@
       candlePoll: null,
       slowPoll: null,
       userHasPanned: false,
+      gestureActive: false,       // user is mid-drag/pan on the chart: data updates are held back
+      pendingBars: new Map(),     // time -> bar, collected while a gesture is active
+      viewContext: null,   // 'ticker|interval' the chart view currently belongs to
+      rightOffset: 0,      // last rightOffset applied (projection room), change-only
       // For the on-chart price/%-change header — derived from the loaded
       // candle series itself (first bar's open vs latest close), so no
       // extra endpoint is needed just to show a price.
@@ -123,22 +127,113 @@
     // global toolbar or the pane header.
     const drawingLayer = global.createDrawingLayer(chartContainerEl, chart, candleSeries, state.ticker);
 
+    // --- Sizing -----------------------------------------------------------
+    // The chart must track its CONTAINER, not just the window: the heatmap sidecar can be
+    // shown/hidden and its divider dragged without any window resize event, which used to leave
+    // the canvases at a stale size (dead strip on the right, crosshair/axis hit areas off).
+    // Lightweight Charts keeps bar spacing and the right-edge anchor across a resize, so the
+    // user's zoom level and scroll position survive; only the amount of history shown changes.
     function resize() {
-      chart.applyOptions({ width: chartContainerEl.clientWidth, height: chartContainerEl.clientHeight });
+      const w = chartContainerEl.clientWidth, h = chartContainerEl.clientHeight;
+      if (w <= 0 || h <= 0) return;  // collapsed / display:none — keep the last good size
+      chart.applyOptions({ width: w, height: h });
     }
-    window.addEventListener('resize', resize);
+    let resizeObserver = null;
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(resize);
+      resizeObserver.observe(chartContainerEl);
+    } else {
+      window.addEventListener('resize', resize);
+    }
     resize();
 
-    // --- Live-tracking interaction detection --------------------------
-    function markUserPanned() { state.userHasPanned = true; }
-    chartContainerEl.addEventListener('mousedown', markUserPanned);
-    chartContainerEl.addEventListener('wheel', markUserPanned, { passive: true });
-    chartContainerEl.addEventListener('touchstart', markUserPanned, { passive: true });
+    // --- VIEW STATE (price axis + time axis) --------------------------------
+    // Three kinds of state are kept strictly apart on this chart:
+    //   data state    — the bars (candleSeries data, state.barTimes);
+    //   view state    — price-axis scale (auto vs. user-set), visible time window, bar spacing;
+    //   layout state  — container size.
+    // ORDINARY DATA UPDATES (ticks, new candles, orb/projection polls, same-context re-fetches)
+    // MUST NEVER write view state. Only a CONTEXT CHANGE (ticker / timeframe / pane rebuilt)
+    // or an explicit user reset (Reset view button, axis double-click) may.
+    //
+    // Root cause of the old "chart snaps back" bug: every 1 s Orb/Projection poll (and every
+    // toggle) re-applied `priceScale.applyOptions({ autoScale: true })`. Lightweight Charts
+    // flips autoScale OFF the moment the user drags/zooms the price axis, so the next poll
+    // silently turned it back ON and the manual scale was lost within a second. On the time
+    // axis the symptom was patched per poll with setVisibleLogicalRange() behind a sticky flag.
+    const coords = global.SkylitChartCoords;
 
+    function priceAxisIsAuto() {
+      try { return candleSeries.priceScale().options().autoScale !== false; }
+      catch (e) { return true; }  // minimal chart implementations without the query API
+    }
+    // Orb/Projection price ranges are folded into autoscale via autoscaleInfoProvider, so when the
+    // axis IS auto we still nudge it to re-evaluate after the range changes (previous behaviour).
+    // When the user has set the scale manually we leave it alone: manual mode never rescales.
+    function refreshPriceAutoscale() {
+      if (priceAxisIsAuto()) chart.priceScale('right').applyOptions({ autoScale: true });
+    }
+
+    // Snapshot of the visible time window expressed in TIMES (not bar indices, which shift when
+    // history is re-fetched). `pinned` = the newest bar (or the room after it) is on screen, i.e.
+    // the user is at the live edge, where Lightweight Charts itself keeps following new bars
+    // while preserving bar spacing and offset.
+    function captureTimeView() {
+      const ts = chart.timeScale();
+      const lr = typeof ts.getVisibleLogicalRange === 'function' ? ts.getVisibleLogicalRange() : null;
+      const times = state.barTimes;
+      if (!lr || !times.length) return null;
+      const iv = coords.intervalSeconds(state.interval);
+      return {
+        pinned: lr.to >= times.length - 1.5,  // newest bar (within half a bar) is on screen
+        fromTime: coords.logicalToTime(times, lr.from, iv),
+        toTime: coords.logicalToTime(times, lr.to, iv),
+      };
+    }
+    function restoreTimeView(view) {
+      if (!view) return;
+      const iv = coords.intervalSeconds(state.interval);
+      chart.timeScale().setVisibleLogicalRange({
+        from: coords.timeToLogical(state.barTimes, view.fromTime, iv),
+        to: coords.timeToLogical(state.barTimes, view.toTime, iv),
+      });
+    }
+    // A fresh context (or an explicit reset): fit history, auto price scale.
+    function applyInitialView() {
+      state.userHasPanned = false;
+      chart.priceScale('right').applyOptions({ autoScale: true });
+      chart.timeScale().fitContent();
+    }
+
+    // --- Live-tracking interaction detection --------------------------
+    // A drag/pan/axis-scale gesture is anchored by Lightweight Charts to the bar index it started
+    // on. A new candle arriving mid-gesture re-bases that index, so the content under the pointer
+    // slips by a bar (a visible hop). "The gesture wins": while the pointer is down we HOLD the
+    // incoming bars (keyed by time, so none is lost) and apply them the instant it is released.
+    function markUserPanned() { state.userHasPanned = true; }
+    function gestureStart() { state.userHasPanned = true; state.gestureActive = true; }
+    function gestureEnd() {
+      if (!state.gestureActive) return;
+      // Deferred one task: this listener runs in the capture phase, BEFORE Lightweight Charts
+      // processes the same mouseup and ends its own drag. Applying the held bars here would still
+      // re-base the drag anchor; after it, the gesture is fully finished.
+      setTimeout(() => { state.gestureActive = false; flushPendingBars(); }, 0);
+    }
+    chartContainerEl.addEventListener('mousedown', gestureStart);
+    chartContainerEl.addEventListener('wheel', markUserPanned, { passive: true });
+    chartContainerEl.addEventListener('touchstart', gestureStart, { passive: true });
+    window.addEventListener('mouseup', gestureEnd, true);
+    window.addEventListener('touchend', gestureEnd, true);
+    window.addEventListener('touchcancel', gestureEnd, true);
+    window.addEventListener('blur', gestureEnd);
+
+    // "Live" button: jump the TIME axis back to the newest bar (keeps zoom and the price scale).
     function resumeLiveTracking() {
       state.userHasPanned = false;
       chart.timeScale().scrollToRealTime();
     }
+    // "Reset view": the explicit way back to the automatic view (fit history + auto price scale).
+    function resetView() { applyInitialView(); }
 
     // --- Minimal on-chart header: ticker + price + %change ONLY --------
     // This is the entire on-chart control surface, per the explicit
@@ -208,13 +303,63 @@
       const res = await fetch(`/api/candles?ticker=${encodeURIComponent(state.ticker)}&interval=${state.interval}`);
       const bars = await res.json();
       if (gen !== loadGen) return;  // ticker/interval changed while this was in flight
+      // Context change (different ticker/timeframe, or first load) => fit + auto price scale.
+      // Same context (history re-fetch / reconnect / same-ticker reselect) => this is a DATA
+      // refresh: capture the view in times, swap the data, restore in the same task (no paint
+      // in between, so no flicker) and leave the price axis alone.
+      const context = `${state.ticker}|${state.interval}`;
+      const sameContext = state.viewContext === context && state.barTimes.length > 0;
+      const priorView = sameContext ? captureTimeView() : null;
       candleSeries.setData(bars);
       state.barTimes = bars.map((b) => b.time);
       state.lastBarTime = bars.length ? bars[bars.length - 1].time : null;
       state.seriesOpenAnchor = bars.length ? bars[0].open : null;
       updatePriceHeader(bars);
-      state.userHasPanned = false;
-      chart.timeScale().fitContent();
+      if (sameContext) {
+        if (priorView && !priorView.pinned) restoreTimeView(priorView);  // pinned: LWC keeps offset + spacing
+      } else {
+        state.viewContext = context;
+        applyInitialView();
+      }
+    }
+
+    // Incremental data path. /api/candles/latest returns the last TWO bars (just-closed +
+    // currently-forming) every poll so the forming bar's in-progress
+    // OHLC is always fresh. series.update() only ever correctly
+    // targets the single most-recent point (match-last-time-or-
+    // append-newer); feeding it the older of the two first made it
+    // misread which bar was "last", which is what caused the
+    // projection's convergence point (and Orbs) to visibly sit a few
+    // candles behind the true latest candle. Drop anything not at or
+    // after our own last-known bar time before calling update() at all.
+    // NOTE (view state): update() is incremental and Lightweight Charts itself keeps a
+    // scrolled-back window fixed (and follows only when the newest bar is on screen, keeping
+    // bar spacing), so nothing here touches the time or price axis.
+    function applyLatestBars(bars) {
+      const lastKnown = state.barTimes.length ? state.barTimes[state.barTimes.length - 1] : null;
+      const relevant = lastKnown == null ? bars : bars.filter((b) => b.time >= lastKnown);
+      for (const bar of relevant) {
+        candleSeries.update(bar);
+        const n = state.barTimes.length;
+        if (n && state.barTimes[n - 1] === bar.time) continue;
+        if (!n || bar.time > state.barTimes[n - 1]) state.barTimes.push(bar.time);
+      }
+      if (relevant.length) state.lastBarTime = relevant[relevant.length - 1].time;
+      updatePriceHeader(bars);
+      projectionLayer.redraw();
+    }
+    // Bars held during a gesture + the fresh poll result, oldest first, de-duplicated by time.
+    function takePendingWith(bars) {
+      for (const bar of bars) state.pendingBars.set(bar.time, bar);
+      return takePending();
+    }
+    function takePending() {
+      const out = [...state.pendingBars.values()].sort((x, y) => x.time - y.time);
+      state.pendingBars.clear();
+      return out;
+    }
+    function flushPendingBars() {
+      if (state.pendingBars.size) applyLatestBars(takePending());
     }
 
     async function pollLatestCandles() {
@@ -225,28 +370,11 @@
         const res = await fetch(`/api/candles/latest?ticker=${encodeURIComponent(state.ticker)}&interval=${state.interval}`, { signal: pollSignal() });
         const bars = await res.json();
         if (gen !== loadGen) return;  // ticker/interval switched mid-flight: these bars belong to the old series
-        const preservedRange = state.userHasPanned ? chart.timeScale().getVisibleLogicalRange() : null;
-        // /api/candles/latest returns the last TWO bars (just-closed +
-        // currently-forming) every poll so the forming bar's in-progress
-        // OHLC is always fresh. series.update() only ever correctly
-        // targets the single most-recent point (match-last-time-or-
-        // append-newer); feeding it the older of the two first made it
-        // misread which bar was "last", which is what caused the
-        // projection's convergence point (and Orbs) to visibly sit a few
-        // candles behind the true latest candle. Drop anything not at or
-        // after our own last-known bar time before calling update() at all.
-        const lastKnown = state.barTimes.length ? state.barTimes[state.barTimes.length - 1] : null;
-        const relevant = lastKnown == null ? bars : bars.filter((b) => b.time >= lastKnown);
-        for (const bar of relevant) {
-          candleSeries.update(bar);
-          const n = state.barTimes.length;
-          if (n && state.barTimes[n - 1] === bar.time) continue;
-          if (!n || bar.time > state.barTimes[n - 1]) state.barTimes.push(bar.time);
+        if (state.gestureActive) {  // hold until the pointer is released (see gestureStart)
+          for (const bar of bars) state.pendingBars.set(bar.time, bar);
+          return;
         }
-        if (preservedRange) chart.timeScale().setVisibleLogicalRange(preservedRange);
-        if (relevant.length) state.lastBarTime = relevant[relevant.length - 1].time;
-        updatePriceHeader(bars);
-        projectionLayer.redraw();
+        applyLatestBars(state.pendingBars.size ? takePendingWith(bars) : bars);
       } catch (e) { /* transient network hiccup — next poll will retry */ }
       finally { inflight.candles--; }
     }
@@ -341,10 +469,18 @@
 
     // Reserve room to the right of the last candle so the forward corridor
     // is actually on screen (real Lightweight Charts honours rightOffset).
+    // Change-only: re-applying an unchanged offset must never touch the view. A genuine change
+    // (projection toggled / horizon changed) moves the live edge; a scrolled-back view is
+    // restored so the toggle can't drag it forward.
     function applyProjectionRoom(windowBars) {
       const ts = chart.timeScale();
       if (typeof ts.applyOptions !== 'function') return;
-      ts.applyOptions({ rightOffset: state.showProjection ? Math.max(4, windowBars || 0) + 6 : 0 });
+      const next = state.showProjection ? Math.max(4, windowBars || 0) + 6 : 0;
+      if (next === state.rightOffset) return;
+      state.rightOffset = next;
+      const view = captureTimeView();
+      ts.applyOptions({ rightOffset: next });
+      if (view && !view.pinned) restoreTimeView(view);
     }
 
     async function loadProjection(isPoll = false) {
@@ -355,7 +491,7 @@
         state.projectionRange = null;
         projectionLayer.clear();
         applyProjectionRoom(0);
-        chart.priceScale('right').applyOptions({ autoScale: true });
+        refreshPriceAutoscale();
         return;
       }
       try {
@@ -374,8 +510,9 @@
         state.projectionRange = sup.length
           ? { min: Math.min(...sup.map((b) => b.lower)), max: Math.max(...sup.map((b) => b.upper)) }
           : null;
-        // Ask Lightweight Charts to re-run autoscale so the new range applies.
-        chart.priceScale('right').applyOptions({ autoScale: true });
+        // Ask Lightweight Charts to re-run autoscale so the new range applies — only while the
+        // price axis is automatic; a user-set scale is never overridden by a data poll.
+        refreshPriceAutoscale();
         projectionLayer.render(data);
         if (opts.onProjectionMeta) opts.onProjectionMeta(data);
       } catch (e) { /* projection unavailable — leave chart bare rather than throw */ }
@@ -386,7 +523,7 @@
       if (isPoll && (inflight.orbs || document.hidden)) return;
       const mySeq = ++seq.orbs;
       let started = false;
-      if (!state.showOrbs) { state.orbRange = null; orbLayer.clear(); chart.priceScale('right').applyOptions({ autoScale: true }); return; }
+      if (!state.showOrbs) { state.orbRange = null; orbLayer.clear(); refreshPriceAutoscale(); return; }
       try {
         inflight.orbs++; started = true;
         const res = await fetch(
@@ -407,7 +544,7 @@
         state.orbRange = filtered.length
           ? { min: Math.min(...filtered.map((n) => n.strike)), max: Math.max(...filtered.map((n) => n.strike)) }
           : null;
-        chart.priceScale('right').applyOptions({ autoScale: true });
+        refreshPriceAutoscale();
         // Orb colors are user-configurable (Orbs window): positive/negative
         // exposure each have their own color; defaults are the original
         // gold / purple.
@@ -461,6 +598,7 @@
 
     async function fullReload() {
       loadGen++;
+      state.pendingBars.clear();
       await loadCandles();
       await Promise.all([loadOrbs(), loadDarkPool(), loadFlow(), loadProjection()]);
     }
@@ -486,7 +624,11 @@
       destroy() {
         clearInterval(state.candlePoll);
         clearInterval(state.slowPoll);
-        window.removeEventListener('resize', resize);
+        if (resizeObserver) resizeObserver.disconnect(); else window.removeEventListener('resize', resize);
+        window.removeEventListener('mouseup', gestureEnd, true);
+        window.removeEventListener('touchend', gestureEnd, true);
+        window.removeEventListener('touchcancel', gestureEnd, true);
+        window.removeEventListener('blur', gestureEnd);
         drawingLayer.destroy();
         orbLayer.destroy();
         projectionLayer.destroy();
@@ -525,6 +667,15 @@
         loadFlow();
       },
       resumeLive() { resumeLiveTracking(); },
+      resetView() { resetView(); },
+      getViewState() {
+        const ts = chart.timeScale();
+        return {
+          priceManual: !priceAxisIsAuto(),
+          timeManual: state.userHasPanned,
+          logicalRange: typeof ts.getVisibleLogicalRange === 'function' ? ts.getVisibleLogicalRange() : null,
+        };
+      },
       isPanned() { return state.userHasPanned; },
       getTicker() { return state.ticker; },
       getDrawingLayer() { return drawingLayer; },
