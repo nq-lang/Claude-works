@@ -125,7 +125,12 @@
     // annotation on a specific chart, not a cross-pane setting — see
     // atlas-drawing.js's header comment for why this doesn't live in the
     // global toolbar or the pane header.
-    const drawingLayer = global.createDrawingLayer(chartContainerEl, chart, candleSeries, state.ticker);
+    const drawingLayer = global.createDrawingLayer(chartContainerEl, chart, candleSeries, state.ticker, {
+      // Drawings are anchored to (time, price); these let the overlay map time <-> x exactly
+      // (including to the right of the newest bar) using the same bar times the chart holds.
+      getBarTimes: () => state.barTimes,
+      getIntervalSeconds: () => global.SkylitChartCoords.intervalSeconds(state.interval),
+    });
 
     // --- Sizing -----------------------------------------------------------
     // The chart must track its CONTAINER, not just the window: the heatmap sidecar can be
@@ -172,6 +177,7 @@
     // When the user has set the scale manually we leave it alone: manual mode never rescales.
     function refreshPriceAutoscale() {
       if (priceAxisIsAuto()) chart.priceScale('right').applyOptions({ autoScale: true });
+      drawingLayer.notifyViewMayHaveChanged();  // autoscale may have moved the price axis under the drawings
     }
 
     // Snapshot of the visible time window expressed in TIMES (not bar indices, which shift when
@@ -321,6 +327,7 @@
         state.viewContext = context;
         applyInitialView();
       }
+      drawingLayer.notifyViewMayHaveChanged();
     }
 
     // Incremental data path. /api/candles/latest returns the last TWO bars (just-closed +
@@ -347,6 +354,7 @@
       if (relevant.length) state.lastBarTime = relevant[relevant.length - 1].time;
       updatePriceHeader(bars);
       projectionLayer.redraw();
+      drawingLayer.notifyViewMayHaveChanged();
     }
     // Bars held during a gesture + the fresh poll result, oldest first, de-duplicated by time.
     function takePendingWith(bars) {

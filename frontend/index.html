@@ -159,6 +159,44 @@
   .atlas-drawing-tool-range.active { background: #5b8dd6; color: #000; }
   .atlas-drawing-clear { border-left: 1px solid #2e2e36; border-radius: 0 6px 6px 0; margin-left: 3px; }
   .atlas-drawing-canvas { position: absolute; inset: 0; z-index: 10; }
+  .atlas-drawing-armed { cursor: crosshair; }
+  .atlas-drawing-hover { cursor: pointer; }
+  .atlas-drawing-sep { width: 1px; align-self: stretch; background: #2e2e36; margin: 2px 4px; }
+  .atlas-drawing-mini {
+    background: transparent; border: none; color: var(--text-dim); width: 26px; height: 26px; border-radius: 6px;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .atlas-drawing-mini:hover { background: #2a2a33; color: #fff; }
+  .atlas-drawing-mini.active { background: #2a2a33; color: #ffd166; }
+  /* Settings dialog (double-click a drawing, or the gear in the list) */
+  .atlas-drawing-modal {
+    position: absolute; z-index: 30; left: 50%; top: 18%; transform: translateX(-50%); width: 260px;
+    background: #14141a; border: 1px solid #34343e; border-radius: 8px; padding: 10px 12px; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    font-family: var(--mono); font-size: 11px; color: #d6d6de;
+  }
+  .atlas-drawing-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .atlas-drawing-modal-title { font-size: 12px; color: #fff; }
+  .atlas-drawing-modal-close { background: none; border: none; color: #8a8a94; font-size: 16px; cursor: pointer; }
+  .atlas-drawing-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 8px; }
+  .atlas-drawing-switch input { position: absolute; opacity: 0; pointer-events: none; }
+  .atlas-drawing-switch-track { width: 30px; height: 16px; border-radius: 8px; background: #3a3a44; position: relative; transition: background .12s; flex-shrink: 0; }
+  .atlas-drawing-switch-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform .12s; }
+  .atlas-drawing-switch input:checked + .atlas-drawing-switch-track { background: #22a35a; }
+  .atlas-drawing-switch input:checked + .atlas-drawing-switch-track::after { transform: translateX(14px); }
+  .atlas-drawing-modal-meta { color: #8a8a94; font-size: 10px; margin-bottom: 8px; word-break: break-word; }
+  .atlas-drawing-delete { background: #2a1418; border: 1px solid #6b2630; color: #f0818c; font-family: var(--mono); font-size: 10px; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+  /* Drawings list */
+  .atlas-drawing-list {
+    position: absolute; z-index: 25; min-width: 230px; max-height: 240px; overflow: auto;
+    background: #14141a; border: 1px solid #34343e; border-radius: 8px; padding: 4px; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    font-family: var(--mono); font-size: 11px; color: #d6d6de;
+  }
+  .atlas-drawing-list-empty { padding: 8px; color: #6b6b76; }
+  .atlas-drawing-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 5px; cursor: pointer; }
+  .atlas-drawing-row:hover, .atlas-drawing-row.selected { background: #22222b; }
+  .atlas-drawing-row.hidden { opacity: .45; }
+  .atlas-drawing-row-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .atlas-drawing-eye, .atlas-drawing-gear { background: none; border: none; color: inherit; cursor: pointer; padding: 2px; display: inline-flex; }
 
   /* --- Orbs rendering layer (web/js/atlas-orbs.js) ----------------------
      Sits ABOVE the candlestick chart but BELOW the drawing-tools canvas

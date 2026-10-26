@@ -34,3 +34,6 @@ suites `tests/e2e/pw_*.py` (see TESTING.md). At this archive: 224 engine unit ch
 Vanna / charm / color / speed are deterministic placeholder series derived from the single synthetic
 exposure feed (`greek_series_value()` in exposure_engine.hpp), and the velocity history is a synthetic
 backward walk (`seed_velocity_history()` in live_feed.hpp). Nothing else in the pipeline needs to change.
+
+## Atlas chart optimization (view persistence, drawing tools, heatmap-off layout)
+See [ATLAS_CHART_OPTIMIZATION.md](ATLAS_CHART_OPTIMIZATION.md).
