@@ -127,6 +127,8 @@ try:
         page.click(f"{pop} [data-dte='2']")
         page.click(f"{pop} [data-greek='GEX+VEX']")
         page.wait_for_timeout(2300)
+        check("draft edits do NOT reach the heatmap before Apply", not seen("expiration=dte:2", mark) and "0DTE" in page.inner_text("#sidecar .hm-selection-line"))
+        page.click(f"{pop} .hm-settings-apply"); page.wait_for_timeout(2300)
         check("heatmap fetches the combined GEX+VEX for the chosen DTE", seen("/api/heatmap?ticker=SPY&exposure=GEX+VEX&expiration=dte:2", mark))
         check("the chosen expiration / Greek chips light up in the settings",
               "active" in page.eval_on_selector(f"{pop} [data-dte='2']", "e => e.className")
@@ -138,13 +140,13 @@ try:
         check("Quadrinity button in the heatmap header is fully visible", sb["x"] + sb["width"] <= 1700, str(sb))
         check("readout under the ticker follows the choice", "2DTE" in page.inner_text("#sidecar .hm-selection-line") and "GEX+VEX" in page.inner_text("#sidecar .hm-selection-line"),
               page.inner_text("#sidecar .hm-selection-line"))
-        page.click(f"{pop} [data-greek='GEX']")
+        page.click(f"{pop} [data-greek='GEX']"); page.click(f"{pop} .hm-settings-apply")
         page.click("body", position={"x": 5, "y": 5})
 
         print("[F] Velocity Mode")
         mark = len(requests)
         page.click("#sidecar .hm-settings-gear")
-        page.click(f"{pop} .hm-velocity-btn")
+        page.click(f"{pop} .hm-velocity-btn"); page.click(f"{pop} .hm-settings-apply")
         page.click("body", position={"x": 5, "y": 5})
         page.wait_for_timeout(2400)
         pills = page.eval_on_selector_all("#sidecar .hm-vel-pill", "els => els.map(e => e.className + '|' + e.textContent)")
@@ -159,6 +161,7 @@ try:
         page.click("#sidecar .hm-settings-gear")
         page.select_option(f"{pop} .hm-vel-baseline", "5m")
         page.select_option(f"{pop} .hm-vel-scope", "0dte")
+        page.click(f"{pop} .hm-settings-apply")
         page.wait_for_timeout(2400)
         check("baseline + expiration scope are configurable", seen("velocity_baseline=5m", mark) and seen("velocity_scope=0dte", mark))
         page.screenshot(path=f"{OUT}/R2_velocity.png")
@@ -166,7 +169,7 @@ try:
 
         print("[G] EXTREME")
         page.click("#sidecar .hm-settings-gear")
-        page.click(f"{pop} .hm-extreme-btn")
+        page.click(f"{pop} .hm-extreme-btn"); page.click(f"{pop} .hm-settings-apply")
         page.click("body", position={"x": 5, "y": 5})
         page.wait_for_timeout(2300)
         bright = page.eval_on_selector_all("#sidecar .hm-row", "els => els.filter(e => e.style.color !== 'rgba(255, 255, 255, 0.35)').length")

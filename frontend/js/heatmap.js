@@ -96,6 +96,50 @@
       pollHandle: null,
     };
 
+    // --- SETTINGS: defaults, applied state, draft state ---------------------------
+    // ONE definition of the defaults (Reset reads it; nothing is hard-coded in handlers).
+    // `state` holds the APPLIED configuration — the only thing the heatmap renders from and the
+    // only thing that is persisted. `draft` is what the settings panel edits; it changes nothing
+    // on the heatmap until Apply. Closing the panel with unapplied edits DISCARDS them.
+    const DEFAULTS = Object.freeze({
+      greek: 'GEX', dte: 0,
+      velocityMode: false, velocityBaseline: 'session', velocityScope: 'match', velocityDtes: [0],
+      showBadges: false, highlightNodesOnly: false, extremesOnly: false, extremesCount: 5,
+    });
+    const SETTING_KEYS = Object.keys(DEFAULTS);
+    const VEL_BASELINES = ['session', '5m', '15m', '1h', 'prev_close'];
+    const VEL_SCOPES = ['match', '0dte', 'all', 'custom'];
+    const pickSettings = (src) => { const o = {}; for (const k of SETTING_KEYS) o[k] = Array.isArray(src[k]) ? [...src[k]] : src[k]; return o; };
+    const sameSettings = (a, b) => SETTING_KEYS.every((k) => JSON.stringify(a[k]) === JSON.stringify(b[k]));
+    // Returns an error string, or null when the configuration is valid.
+    function validateSettings(c) {
+      if (!state.greekOptions.includes(c.greek)) return `Greek must be one of ${state.greekOptions.join(', ')}`;
+      if (!Number.isInteger(c.dte) || c.dte < 0 || c.dte > 6) return 'Expiration must be 0-6 DTE';
+      if (!VEL_BASELINES.includes(c.velocityBaseline)) return 'Unknown velocity baseline';
+      if (!VEL_SCOPES.includes(c.velocityScope)) return 'Unknown velocity scope';
+      if (c.velocityScope === 'custom' && !(Array.isArray(c.velocityDtes) && c.velocityDtes.length && c.velocityDtes.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) return 'Pick at least one custom velocity expiration';
+      if (!Number.isInteger(c.extremesCount) || c.extremesCount < 1 || c.extremesCount > 20) return 'EXTREME strikes per side must be 1-20';
+      return null;
+    }
+    const settingsKey = opts.settingsKey ? `skylit:heatmap-settings:${opts.settingsKey}` : null;
+    function persistSettings() {
+      if (!settingsKey) return;
+      try { localStorage.setItem(settingsKey, JSON.stringify(pickSettings(state))); } catch (e) { /* not persisted */ }
+    }
+    if (settingsKey) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(settingsKey) || 'null');
+        if (saved && typeof saved === 'object') {
+          const merged = { ...pickSettings(state), ...saved };
+          if (!validateSettings(merged)) Object.assign(state, pickSettings(merged));   // a corrupt/stale save is ignored
+        }
+      } catch (e) { /* ignore */ }
+    }
+    const draft = pickSettings(state);
+    // Quick controls that live OUTSIDE the settings panel apply immediately; once moved inside it
+    // (compact mode) they edit the draft like everything else.
+    const inPanel = !!opts.compactControls;
+
     const GREEK_NAMES = { GEX: 'Gamma', VEX: 'Vanna', 'GEX+VEX': 'Gamma+Vanna', CHEX: 'Charm', COLOR: 'Color', SPEED: 'Speed' };
     container.innerHTML = `
       <div class="hm-panel">
@@ -153,18 +197,21 @@
     function syncDteUi() {
       syncSelectionLine();
       container.querySelector('.hm-dte-label').textContent = `${state.dte}DTE \u00b7 ${state.greek}`;
-      chipHost.querySelectorAll('[data-dte]').forEach((b) => b.classList.toggle('active', parseInt(b.dataset.dte, 10) === state.dte));
-      chipHost.querySelectorAll('[data-greek]').forEach((b) => b.classList.toggle('active', b.dataset.greek === state.greek));
+      const v = inPanel ? draft : state;   // chips inside the settings panel show the DRAFT
+      chipHost.querySelectorAll('[data-dte]').forEach((b) => b.classList.toggle('active', parseInt(b.dataset.dte, 10) === v.dte));
+      chipHost.querySelectorAll('[data-greek]').forEach((b) => b.classList.toggle('active', b.dataset.greek === v.greek));
     }
     function notifySelection() { if (state.onSelectionChange) state.onSelectionChange({ greek: state.greek, dte: state.dte }); }
     dteMenu.querySelectorAll('[data-dte]').forEach((b) => b.addEventListener('click', () => {
-      state.dte = parseInt(b.dataset.dte, 10);
+      if (inPanel) { draft.dte = parseInt(b.dataset.dte, 10); refreshDraftUi(); return; }
+      state.dte = draft.dte = parseInt(b.dataset.dte, 10);
       state.hasRenderedOnce = false;   // a different expiry's King/spot may sit elsewhere: re-center
-      syncDteUi(); notifySelection(); fetchAndRender();
+      persistSettings(); syncDteUi(); notifySelection(); fetchAndRender();
     }));
     dteMenu.querySelectorAll('[data-greek]').forEach((b) => b.addEventListener('click', () => {
-      state.greek = b.dataset.greek;
-      syncDteUi(); notifySelection(); fetchAndRender();
+      if (inPanel) { draft.greek = b.dataset.greek; refreshDraftUi(); return; }
+      state.greek = draft.greek = b.dataset.greek;
+      persistSettings(); syncDteUi(); notifySelection(); fetchAndRender();
     }));
     dteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -187,14 +234,19 @@
     const extremeBtn = container.querySelector('.hm-extreme-btn');
     function syncToggleButtons() {
       syncSelectionLine();
-      velocityBtn.classList.toggle('active', state.velocityMode);
-      extremeBtn.classList.toggle('active', state.extremesOnly);
+      const v = inPanel ? draft : state;
+      velocityBtn.classList.toggle('active', v.velocityMode);
+      extremeBtn.classList.toggle('active', v.extremesOnly);
     }
-    velocityBtn.addEventListener('click', () => { state.velocityMode = !state.velocityMode; syncToggleButtons(); fetchAndRender(); });
+    velocityBtn.addEventListener('click', () => {
+      if (inPanel) { draft.velocityMode = !draft.velocityMode; refreshDraftUi(); return; }
+      state.velocityMode = draft.velocityMode = !state.velocityMode; persistSettings(); syncToggleButtons(); fetchAndRender();
+    });
     extremeBtn.addEventListener('click', () => {
-      state.extremesOnly = !state.extremesOnly;
+      if (inPanel) { draft.extremesOnly = !draft.extremesOnly; refreshDraftUi(); return; }
+      state.extremesOnly = draft.extremesOnly = !state.extremesOnly;
       if (el && el.extremesCheckbox) el.extremesCheckbox.checked = state.extremesOnly;
-      syncToggleButtons(); fetchAndRender();
+      persistSettings(); syncToggleButtons(); fetchAndRender();
     });
     syncToggleButtons();
 
@@ -244,6 +296,11 @@
       <select class="hm-extremes-count">
         ${[4, 5, 6, 7, 8, 9, 10].map((n) => `<option value="${n}" ${n === state.extremesCount ? 'selected' : ''}>${n} strikes each side</option>`).join('')}
       </select>
+      <div class="hm-settings-error" style="display:none;"></div>
+      <div class="hm-settings-actions">
+        <button class="hm-settings-reset" title="Restore the default settings and apply them">Reset</button>
+        <button class="hm-settings-apply" title="Save these settings and apply them to the heatmap" disabled>Apply</button>
+      </div>
     `;
     document.body.appendChild(settingsPopover);
 
@@ -279,11 +336,11 @@
           const h = settingsPopover.offsetHeight;
           if (rect.bottom + 6 + h > window.innerHeight - 8) settingsPopover.style.top = `${Math.max(8, window.innerHeight - h - 8)}px`;
         } else {
-          settingsPopover.style.display = 'none';
+          settingsPopover.style.display = 'none'; discardDraft();
         }
       });
       document.addEventListener('click', (e) => {
-        if (!settingsPopover.contains(e.target) && e.target !== gearBtn) settingsPopover.style.display = 'none';
+        if (settingsPopover.style.display !== 'none' && !settingsPopover.contains(e.target) && e.target !== gearBtn) { settingsPopover.style.display = 'none'; discardDraft(); }
       }, { signal: lifecycle.signal });
     }
 
@@ -334,37 +391,54 @@
       el.closeBtn.addEventListener('click', () => state.onClose && state.onClose());
     }
 
-    el.velBaseline.addEventListener('change', () => { state.velocityBaseline = el.velBaseline.value; fetchAndRender(); });
-    el.velScope.addEventListener('change', () => {
-      state.velocityScope = el.velScope.value;
-      el.velCustom.style.display = state.velocityScope === 'custom' ? 'flex' : 'none';
-      fetchAndRender();
-    });
+    // Panel controls edit the DRAFT only; nothing reaches the heatmap until Apply.
+    el.velBaseline.addEventListener('change', () => { draft.velocityBaseline = el.velBaseline.value; refreshDraftUi(); });
+    el.velScope.addEventListener('change', () => { draft.velocityScope = el.velScope.value; refreshDraftUi(); });
     el.velCustom.querySelectorAll('[data-vdte]').forEach((c) => c.addEventListener('change', () => {
-      const picked = [...el.velCustom.querySelectorAll('[data-vdte]')].filter((x) => x.checked).map((x) => parseInt(x.dataset.vdte, 10));
-      state.velocityDtes = picked.length ? picked : [0];
-      fetchAndRender();
+      draft.velocityDtes = [...el.velCustom.querySelectorAll('[data-vdte]')].filter((x) => x.checked).map((x) => parseInt(x.dataset.vdte, 10));
+      refreshDraftUi();
     }));
+    el.badgesCheckbox.addEventListener('change', () => { draft.showBadges = el.badgesCheckbox.checked; refreshDraftUi(); });
+    el.highlightCheckbox.addEventListener('change', () => { draft.highlightNodesOnly = el.highlightCheckbox.checked; refreshDraftUi(); });
+    el.extremesCheckbox.addEventListener('change', () => { draft.extremesOnly = el.extremesCheckbox.checked; refreshDraftUi(); });
+    el.extremesCountSelect.addEventListener('change', () => { draft.extremesCount = parseInt(el.extremesCountSelect.value, 10); refreshDraftUi(); });
 
-    el.badgesCheckbox.addEventListener('change', () => {
-      state.showBadges = el.badgesCheckbox.checked;
+    const applyBtn = settingsPopover.querySelector('.hm-settings-apply');
+    const resetBtn = settingsPopover.querySelector('.hm-settings-reset');
+    const errEl = settingsPopover.querySelector('.hm-settings-error');
+    function showError(msg) { errEl.textContent = msg || ''; errEl.style.display = msg ? 'block' : 'none'; }
+    // Push the draft into every control in the panel; Apply is only enabled with pending changes.
+    function refreshDraftUi() {
+      el.velBaseline.value = draft.velocityBaseline;
+      el.velScope.value = draft.velocityScope;
+      el.velCustom.style.display = draft.velocityScope === 'custom' ? 'flex' : 'none';
+      el.velCustom.querySelectorAll('[data-vdte]').forEach((c) => { c.checked = draft.velocityDtes.includes(parseInt(c.dataset.vdte, 10)); });
+      el.badgesCheckbox.checked = draft.showBadges;
+      el.highlightCheckbox.checked = draft.highlightNodesOnly;
+      el.extremesCheckbox.checked = draft.extremesOnly;
+      el.extremesCountSelect.value = String(draft.extremesCount);
+      syncDteUi(); syncToggleButtons();
+      applyBtn.disabled = sameSettings(draft, state);
+      showError('');
+    }
+    // Commit a configuration as the new APPLIED state: validate, store, render, persist.
+    function commitSettings(cfg) {
+      const err = validateSettings(cfg);
+      if (err) { showError(err); return false; }       // the draft is kept so the user can fix it
+      const dteChanged = cfg.dte !== state.dte, selChanged = dteChanged || cfg.greek !== state.greek;
+      Object.assign(state, pickSettings(cfg));
+      if (dteChanged) state.hasRenderedOnce = false;   // another expiry's King/spot may sit elsewhere: re-center
+      Object.assign(draft, pickSettings(state));
+      persistSettings();
+      refreshDraftUi(); syncDteUi(); syncToggleButtons();
+      if (selChanged) notifySelection();
       fetchAndRender();
-    });
-
-    el.highlightCheckbox.addEventListener('change', () => {
-      state.highlightNodesOnly = el.highlightCheckbox.checked;
-      fetchAndRender();
-    });
-
-    el.extremesCheckbox.addEventListener('change', () => {
-      state.extremesOnly = el.extremesCheckbox.checked;
-      syncToggleButtons();
-      fetchAndRender();
-    });
-    el.extremesCountSelect.addEventListener('change', () => {
-      state.extremesCount = parseInt(el.extremesCountSelect.value, 10);
-      fetchAndRender();
-    });
+      return true;
+    }
+    applyBtn.addEventListener('click', () => { if (!applyBtn.disabled) commitSettings(draft); });
+    resetBtn.addEventListener('click', () => commitSettings(pickSettings(DEFAULTS)));   // restores defaults AND applies them
+    function discardDraft() { Object.assign(draft, pickSettings(state)); refreshDraftUi(); }
+    refreshDraftUi();
 
     function render(board) {
       if (state.firstSpot === null) state.firstSpot = board.spot;
@@ -559,21 +633,23 @@
       resume: resumePolling,
       destroy() { clearInterval(state.pollHandle); renderSeq++; lifecycle.abort(); settingsPopover.remove(); dteMenu.remove(); },
       setTicker(t) { state.ticker = t; state.hasRenderedOnce = false; el.tickerSelect.value = t; fetchAndRender(); },
-      setGreek(g) { state.greek = g; syncDteUi(); fetchAndRender(); },
-      setDte(d) { state.dte = d; state.hasRenderedOnce = false; syncDteUi(); fetchAndRender(); },
+      setGreek(g) { state.greek = draft.greek = g; persistSettings(); refreshDraftUi(); fetchAndRender(); },
+      setDte(d) { state.dte = draft.dte = d; state.hasRenderedOnce = false; persistSettings(); refreshDraftUi(); fetchAndRender(); },
       getSelection() { return { greek: state.greek, dte: state.dte }; },
       setShowBadges(show) {
-        state.showBadges = show;
-        el.badgesCheckbox.checked = show;
+        state.showBadges = draft.showBadges = show;
+        persistSettings(); refreshDraftUi();
         fetchAndRender();
       },
       setHighlightNodesOnly(show) {
-        state.highlightNodesOnly = show;
-        el.highlightCheckbox.checked = show;
+        state.highlightNodesOnly = draft.highlightNodesOnly = show;
+        persistSettings(); refreshDraftUi();
         fetchAndRender();
       },
-      setExtreme(show) { state.extremesOnly = show; el.extremesCheckbox.checked = show; syncToggleButtons(); fetchAndRender(); },
-      setVelocityMode(show) { state.velocityMode = show; syncToggleButtons(); fetchAndRender(); },
+      setExtreme(show) { state.extremesOnly = draft.extremesOnly = show; persistSettings(); refreshDraftUi(); fetchAndRender(); },
+      setVelocityMode(show) { state.velocityMode = draft.velocityMode = show; persistSettings(); refreshDraftUi(); fetchAndRender(); },
+      resetToDefaults() { return commitSettings(pickSettings(DEFAULTS)); },
+      getSettings() { return pickSettings(state); },
     };
   }
 

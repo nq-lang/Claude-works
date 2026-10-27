@@ -143,8 +143,11 @@
         showBadges: state.showBadges,
         greekOptions: ['GEX', 'VEX', 'GEX+VEX'],   // Atlas heatmaps: gamma, vanna, or both combined
         compactControls: true,                      // DTE/Greek/Velocity/EXTREME live in the heatmap's settings
+        settingsKey: 'atlas:single',                // applied settings persist per panel
       });
       state.singlePanel = { controller };
+      state.showBadges = controller.getSettings().showBadges;   // the header Badges button mirrors the applied setting
+      el.badgesBtn.classList.toggle('active', state.showBadges);
       if (opts.onPaneCountChange) opts.onPaneCountChange(1);
     }
 
@@ -158,7 +161,7 @@
       }
       state.tickers = state.tickers.slice(0, state.paneCount);
 
-      state.tickers.forEach((ticker) => {
+      state.tickers.forEach((ticker, idx) => {
         const paneEl = document.createElement('div');
         paneEl.className = 'sidecar-horizontal-pane';
         el.panels.appendChild(paneEl);
@@ -168,6 +171,7 @@
           showBadges: state.showBadges,
           greekOptions: ['GEX', 'VEX', 'GEX+VEX'],
           compactControls: true,
+          settingsKey: `atlas:multi:${idx}`,
         });
         state.panels.push({ controller });
       });
