@@ -226,7 +226,7 @@ inline std::string projection_to_json(const engine::ProjectionResult& r,
     }
     return std::format(
         R"({{"ticker":"{}","exposure":"{}","dte":{},"bucket":"{}","spot":{:.4f},"beta":true,)"
-        R"("label":"BETA \u2014 a positioning scenario, not a probability forecast. Shows where dealer exposure sits ahead, not where price will be.",)"
+        R"("label":"Positioning scenario \u2014 not a probability forecast. Shows where dealer exposure sits ahead, not where price will be.",)"
         R"("timeframe":{},)"
         R"("horizon":{{"requested_bars":{},"effective_bars":{},"max_bars":{},"clamped":{}}},)"
         R"("zone_half_thickness":{:.4f},"gex_share":{:.4f},"regime_score":{:.4f},"regime_factor":{:.4f},"confidence":{:.4f},)"

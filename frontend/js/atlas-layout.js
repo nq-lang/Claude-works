@@ -160,7 +160,7 @@
       orbPosColor: ORB_DEFAULTS.posColor,
       orbNegColor: ORB_DEFAULTS.negColor,
       orbShowLabels: ORB_DEFAULTS.showLabels,
-      // Atlas Projections (Beta): one EXACT DTE (0-6) projected from the
+      // Atlas Projections: one EXACT DTE (0-6) projected from the
       // selected Greeks (Projections window; independent of Expiry Data).
       showProjection: false,
       projectionDte: 0,
@@ -296,7 +296,7 @@
         <div class="rail-status rail-status-live atlas-expiry-status"></div>
       </div>
       <div class="rail-section">
-        <div class="rail-header">Projections <span class="atlas-beta-chip">BETA</span></div>
+        <div class="rail-header">Projections</div>
         <div class="rail-row">
           <label class="rail-switch"><input type="checkbox" class="atlas-projection-toggle"><span class="rail-switch-track"></span><span>Projections</span></label>
           <button class="rail-btn atlas-projection-open" title="Projection settings">&#9881; Settings</button>

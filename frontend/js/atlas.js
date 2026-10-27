@@ -41,7 +41,7 @@
       showOrbs: opts.showOrbs !== undefined ? opts.showOrbs : true,
       showDarkPool: !!opts.showDarkPool,
       showFlow: !!opts.showFlow,
-      // Atlas Projections (Beta). projectionWindow 0 = timeframe default; the
+      // Atlas Projections. projectionWindow 0 = timeframe default; the
       // BACKEND clamps it to the timeframe's max (Part III) and reports the
       // effective window back through onProjectionMeta.
       showProjection: !!opts.showProjection,
@@ -471,7 +471,7 @@
     };
     const orbLayer = global.createOrbLayer(chartContainerEl, chart, candleSeries, barGeometryHooks);
 
-    // Atlas Projections (Beta): render-only layer; all numbers come from
+    // Atlas Projections: render-only layer; all numbers come from
     // GET /api/projection (shared C++ engine).
     const projectionLayer = global.createProjectionLayer(chartContainerEl, chart, candleSeries, barGeometryHooks);
 
@@ -651,7 +651,7 @@
         drawingLayer.setActiveTicker(t);
         fullReload();
       },
-      setInterval(iv) { state.interval = iv; fullReload(); },
+      setInterval(iv) { state.interval = iv; drawingLayer.reset(); fullReload(); },
       // Expiry Data window selection: Greeks (comma list) + DTE set ("dte:0,1,3").
       // Drives Orbs only — Projections has its own selection below.
       setDataSelection({ exposure, expiration }) {

@@ -136,6 +136,7 @@
       cursor: null,         // last pointer position in wrapper pixels { x, y } (null = outside)
       selectedId: null,
       hideAll: false,       // temporary master override (not persisted)
+      sticky: false,        // explicit 'keep drawing' choice; OFF by default = one drawing per activation
     };
     const drawings = () => (state.byTicker[state.ticker] || (state.byTicker[state.ticker] = loadFromStorage(state.ticker)));
     const persist = () => saveToStorage(state.ticker, drawings());
@@ -152,10 +153,13 @@
       `<button class="atlas-drawing-tool atlas-drawing-clear" title="Clear all drawings on this ticker">${ICONS.clear}</button>` +
       `<span class="atlas-drawing-sep"></span>` +
       `<button class="atlas-drawing-mini atlas-drawing-master-btn" title="Hide / show ALL drawings (temporary; each drawing keeps its own Displayed setting)">${ICONS.eye}</button>` +
+      `<button class="atlas-drawing-mini atlas-drawing-sticky-btn" title="Keep drawing: stay in the tool after placing (off = one drawing per activation)">&#8734;</button>` +
       `<button class="atlas-drawing-mini atlas-drawing-list-btn" title="Drawings list">${ICONS.list}</button>`;
     wrapper.appendChild(strip);
     const masterBtn = strip.querySelector('.atlas-drawing-master-btn');
     const listBtn = strip.querySelector('.atlas-drawing-list-btn');
+    const stickyBtn = strip.querySelector('.atlas-drawing-sticky-btn');
+    stickyBtn.addEventListener('click', () => { state.sticky = !state.sticky; stickyBtn.classList.toggle('active', state.sticky); });
 
     // Drag the whole toolbar anywhere on the chart; position stored as a fraction of the chart area.
     function clampStrip(x, y) {
@@ -204,6 +208,14 @@
     });
 
     const toolBtns = [...strip.querySelectorAll('.atlas-drawing-tool[data-tool]')];
+    // INTERACTION STATE MACHINE:  idle -> armed -> placing -> committing -> idle
+    //   idle      tool === 'cursor'                      no preview, no capture of chart input
+    //   armed     tool !== 'cursor', no first point yet   ghost follows the pointer
+    //   placing   first point set (state.placing)         live in-progress shape
+    //   committing  commit() running (synchronous) — returns to idle unless the user chose sticky
+    // Every cancel path (Esc, right-click, same-tool click, other tool, ticker/timeframe change)
+    // goes through setTool('cursor'), which clears placing/gesture/preview in one place.
+    function getMode() { return state.tool === 'cursor' ? 'idle' : (state.placing ? 'placing' : 'armed'); }
     function setTool(id) {
       state.tool = id;
       state.placing = null;
@@ -213,7 +225,8 @@
       if (id !== 'cursor') { state.selectedId = null; closeModal(); }
       invalidate(DIRTY_PREVIEW | DIRTY_COMMITTED);
     }
-    toolBtns.forEach((btn) => btn.addEventListener('click', () => setTool(btn.dataset.tool)));
+    // Clicking the active tool's button again is a cancel path: back to idle.
+    toolBtns.forEach((btn) => btn.addEventListener('click', () => setTool(btn.dataset.tool === state.tool && state.tool !== 'cursor' ? 'cursor' : btn.dataset.tool)));
     strip.querySelector('.atlas-drawing-clear').addEventListener('click', () => api.clearAll());
     masterBtn.addEventListener('click', () => {
       state.hideAll = !state.hideAll;
@@ -614,9 +627,14 @@
       const type = state.tool;
       if (!state.placing || !P || type === 'cursor') { state.placing = null; invalidate(DIRTY_PREVIEW); return; }
       const moved = Math.hypot(x - gs.downX, y - gs.downY) > DRAG_THRESHOLD_PX;
-      if (POINTS_NEEDED[type] === 1) { commit(type, state.placing.p1, state.placing.p1); state.placing = null; }
+      let committed = false;
+      if (POINTS_NEEDED[type] === 1) { commit(type, state.placing.p1, state.placing.p1); committed = true; }
       else if (!gs.startedPlacing && !moved) { /* first click of click-click placement: keep the anchor */ }
-      else { commit(type, state.placing.p1, P); state.placing = null; }
+      else { commit(type, state.placing.p1, P); committed = true; }
+      if (committed) {
+        state.placing = null;
+        if (!state.sticky) setTool('cursor');   // one drawing per activation: fully leave placement mode
+      }
       invalidate(DIRTY_PREVIEW);
     }
 
@@ -632,6 +650,12 @@
         api.deleteDrawing(state.selectedId);
       }
     }
+    function onContextMenu(e) {
+      if (state.tool === 'cursor' || isUi(e.target)) return;
+      e.preventDefault();                 // right-click cancels placement instead of opening the menu
+      if (state.placing) { state.placing = null; state.gesture = null; invalidate(DIRTY_PREVIEW); }
+      else setTool('cursor');
+    }
     function onLeave() { state.cursor = null; invalidate(DIRTY_PREVIEW); }
     function onDbl(e) {
       if (isUi(e.target) || state.tool !== 'cursor') return;
@@ -645,6 +669,7 @@
     wrapper.addEventListener('mousemove', onMove, true);
     wrapper.addEventListener('mouseleave', onLeave);
     wrapper.addEventListener('dblclick', onDbl, true);
+    wrapper.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('mouseup', onUp, true);
     window.addEventListener('keydown', onKey, true);
 
@@ -753,6 +778,7 @@
         wrapper.removeEventListener('mousemove', onMove, true);
         wrapper.removeEventListener('mouseleave', onLeave);
         wrapper.removeEventListener('dblclick', onDbl, true);
+        wrapper.removeEventListener('contextmenu', onContextMenu, true);
         window.removeEventListener('mouseup', onUp, true);
         window.removeEventListener('keydown', onKey, true);
         if (typeof ts.unsubscribeVisibleLogicalRangeChange === 'function') ts.unsubscribeVisibleLogicalRangeChange(onRange);
@@ -763,7 +789,8 @@
       // Called by atlas.js whenever the pane's ticker changes: swap in that ticker's own drawing set.
       setActiveTicker(ticker) {
         state.ticker = ticker;
-        state.placing = null; state.gesture = null; state.selectedId = null;
+        setTool('cursor');                 // tool state never leaks across tickers
+        state.selectedId = null;
         closeModal();
         invalidate(DIRTY_COMMITTED | DIRTY_PREVIEW);
         refreshList();
@@ -773,6 +800,8 @@
       getDrawingCount() { return drawings().length; },
       getDrawings() { return drawings().map(clone); },
       getTool() { return state.tool; },
+      getMode,
+      reset() { setTool('cursor'); },   // timeframe/workspace change: back to idle
       setTool,
       setDrawingVisible(id, visible) { setVisible(id, visible); },
       deleteDrawing(id) {

@@ -95,14 +95,16 @@ try:
               and abs(d["p2"]["price"] - before_commit["p2"]["price"]) < 1e-9)
         pp = pg.evaluate(f"(p) => ({L})().pixelOf(p)", d["p2"])
         check("committed anchor lands on the cursor pixel (<=0.75 px)", abs(pp["x"] + X0 - (cx + 220)) <= .75 and abs(pp["y"] + Y0 - (cy - 110)) <= .75, f"{pp['x'] + X0:.2f},{pp['y'] + Y0:.2f} vs {cx + 220},{cy - 110}")
-        check("preview gone from the preview layer? (cursor still over chart => ghost for next one, but no leftovers of the placed one)",
-              pg.evaluate(f"() => ({L})().getPreview().placing") is False)
+        check("after placing, the tool returns to idle: no preview at all",
+              pg.evaluate(f"() => ({L})().getPreview()") is None and pg.evaluate(f"() => ({L})().getMode()") == "idle")
         # drag placement still works
+        pg.click("#chart-pane .atlas-drawing-tool-rect")
         pg.mouse.move(cx - 200, cy + 40); pg.mouse.down()
         for i in range(1, 11): pg.mouse.move(cx - 200 + i * 15, cy + 40 - i * 6); pg.wait_for_timeout(12)
         pg.mouse.up(); frames(3)
         check("press-drag-release placement also commits", len(drawings()) == 2)
         # Esc cancels an in-progress placement, leaving no artifacts
+        pg.click("#chart-pane .atlas-drawing-tool-rect")
         pg.mouse.move(cx, cy + 100); pg.mouse.down(); pg.mouse.up(); frames(2)
         pg.mouse.move(cx + 60, cy + 150); frames(2)
         check("in-progress preview visible before Esc", pg.evaluate(PIX, PREV)["amber"] > 60)

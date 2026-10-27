@@ -1,4 +1,4 @@
-// Skylit Heatseeker Terminal — Atlas Projections (Beta) render layer.
+// Skylit Heatseeker Terminal — Atlas Projections render layer.
 //
 // Rendering only. Every number drawn here comes from GET /api/projection,
 // computed by the shared C++ engine (projection_engine.hpp on top of
