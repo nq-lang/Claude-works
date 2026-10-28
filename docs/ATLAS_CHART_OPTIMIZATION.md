@@ -86,3 +86,24 @@ Open the terminal (default layout, SPY 5m). Wait ~5 s for data.
 **WS3 — layout**
 10. Uncheck **Show Heatmap**: heatmap disappears, chart fills the full width, no gap/scrollbar, no divider; a **Show heatmap** button appears in the toolbar. Your zoom/price scale and drawings are unchanged. (Network tab: no heatmap requests while hidden.)
 11. Click **Show heatmap**: the original split returns and updates resume.
+
+## Fixes round 2 — status and evidence
+
+| Area | Status | Evidence |
+|---|---|---|
+| S1 drawing state machine | done | `pw_drawing_state.py` |
+| S5 King/Barney (heatmap + orbs) | done: King = most positive, Barney = most negative, per Greek+DTE, 2% hysteresis | `pw_heatmap_kingbarney.py`, `pw_orbs_greeks.py` |
+| S6 beta labels | done | `pw_atlas_remodel.py` |
+| S7 Apply/Reset | done | `pw_heatmap_settings.py` |
+| S9 orbs locked to price | done: painted in the chart's own render pass (0 px drift vs 3 px before) | `perf_orb_drift.py` |
+| S10 labels / no Greek merging | done | `pw_orbs_greeks.py` |
+| S11 tickers | done (VIX, TSLA, MSFT, NVDA, AMZN added; synthetic data) | `pw_tickers.py`, `docs/TICKERS.md` |
+| S8 performance | measured, no regression, no bottleneck found | `perf_frontend.py` |
+
+S8 numbers (headless software-rendered Chromium, real Lightweight Charts, 60 s soak; before → after):
+idle 16.9 → 16.8 ms/frame; pan p95 33.3 → 33.3 ms; zoom mean 21.9 → 18.7 ms; ticker switch 123–178 → 129–232 ms
+(noisy, 4 samples); heap +0.4 MB/30 s → +0.3 MB/60 s; DOM nodes and listeners flat. A multi-hour soak was not run.
+
+Not verifiable with the synthetic backend (needs real data or owner input): S2 reconciliation against a raw
+source, S10.2 Greek math vs reference chains, VIX forward / American-dividend treatment, S4 audit and S3
+setting-by-setting table, GEX+VEX calibrated model (the prose description has no concrete coefficients).
