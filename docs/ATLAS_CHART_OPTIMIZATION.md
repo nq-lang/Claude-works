@@ -107,3 +107,9 @@ idle 16.9 → 16.8 ms/frame; pan p95 33.3 → 33.3 ms; zoom mean 21.9 → 18.7 m
 Not verifiable with the synthetic backend (needs real data or owner input): S2 reconciliation against a raw
 source, S10.2 Greek math vs reference chains, VIX forward / American-dividend treatment, S4 audit and S3
 setting-by-setting table, GEX+VEX calibrated model (the prose description has no concrete coefficients).
+
+### Final verification run
+Full `make test` (224 unit + smoke incl. expiry API + 3361 Greek-vs-finite-difference checks), `make test-e2e` (all 19 Playwright
+suites green), ASan/TSan `make test-sanitize` clean, backend-restart + soak suite 13/13. Frontend soak 420 s, real Lightweight
+Charts, panning every 5 s: heap 4.2 -> 4.9 MB (sublinear: +0.3 MB in the first 60 s), DOM nodes 1659 -> 1659, listeners 223 -> 223,
+no errors; frame pacing ~16.7 ms idle / pan / zoom. Still not run: multi-hour soak, real-data reconciliation.
