@@ -160,8 +160,8 @@
           </div>
         </div>
         <div class="hm-subheader">
-          <div class="hm-king-label"><span class="hm-king-dot"></span> King <span class="hm-king-strike"></span></div>
-          <div class="hm-neg-label" style="display:none;"><span class="hm-neg-dot"></span> Neg <span class="hm-neg-strike"></span></div>
+          <div class="hm-king-label" title="King = the strike with the most POSITIVE exposure for this Greek and expiry"><span class="hm-king-dot"></span> King <span class="hm-king-strike"></span></div>
+          <div class="hm-neg-label" style="display:none;" title="Barney = the strike with the most NEGATIVE exposure for this Greek and expiry"><span class="hm-neg-dot"></span> Barney <span class="hm-neg-strike"></span></div>
           <button class="hm-settings-gear" title="Heatmap settings">&#9881;</button>
         </div>
         <div class="hm-rows"></div>
@@ -448,12 +448,14 @@
       el.changeBadge.classList.toggle('positive', changePct >= 0);
       el.changeBadge.classList.toggle('negative', changePct < 0);
 
-      el.kingStrike.textContent = board.king_strike != null ? `@ ${fmtStrike(board.king_strike)}` : '';
-
-      // The most NEGATIVE strike is highlighted alongside the King (the
-      // header label plus a purple marker on its row).
-      let negNode = null;
-      board.nodes.forEach((n) => { if (n.exposure < 0 && (!negNode || n.exposure < negNode.exposure)) negNode = n; });
+      // King = most POSITIVE strike, Barney = most NEGATIVE strike (owner definitions), computed over
+      // the FULL board for this (ticker, Greek, DTE) with hysteresis keyed to that same scope.
+      const memKey = `${state.ticker}|${state.greek}|${state.dte}`;
+      if (state.extremesMemoryKey !== memKey) { state.extremesMemoryKey = memKey; state.extremesMemory = null; }
+      const ext = SkylitNodeUtils.classifyExtremes(board.nodes, board.spot, state.extremesMemory);
+      state.extremesMemory = { king: ext.king ? ext.king.strike : null, barney: ext.barney ? ext.barney.strike : null };
+      const kingNode = ext.king, negNode = ext.barney;
+      el.kingStrike.textContent = kingNode ? `@ ${fmtStrike(kingNode.strike)}` : '';
       el.negLabel.style.display = negNode ? '' : 'none';
       if (negNode) el.negStrike.textContent = `@ ${fmtStrike(negNode.strike)}`;
 
@@ -494,7 +496,7 @@
         const bg = exposureToColor(n.exposure, maxAbs);
         const fg = textColorFor(n.exposure, maxAbs);
 
-        const isKing = n.role === 'king';
+        const isKing = !!kingNode && n.strike === kingNode.strike;
         const isGatekeeper = n.role === 'gatekeeper';
         const isHedge = n.role === 'hedge';
         const isStructuralNode = isKing || isGatekeeper || isHedge;
@@ -520,10 +522,10 @@
           row.style.color = fg;
         }
 
-        const isNeg = negNode && n.strike === negNode.strike && !isKing;
+        const isNeg = !!negNode && n.strike === negNode.strike;
         let badge = '';
-        if (isNeg) badge = '<span class="hm-badge hm-badge-neg" title="Most negative strike"></span>';
-        else if (isKing) badge = '<span class="hm-badge hm-badge-king" title="King Node"></span>';
+        if (isNeg) badge = '<span class="hm-badge hm-badge-neg" title="Barney — most negative strike"></span>';
+        else if (isKing) badge = '<span class="hm-badge hm-badge-king" title="King — most positive strike"></span>';
         else if (isGatekeeper) badge = '<span class="hm-badge hm-badge-gate" title="Gatekeeper Node"></span>';
         else if (isHedge) badge = '<span class="hm-badge hm-badge-hedge" title="Hedge Node"></span>';
 
