@@ -167,10 +167,14 @@ int main(int argc, char** argv) {
     // with plausible round-number spot/strike-step values for a legible
     // demo board; not real market levels.
     std::vector<skylit::live::TickerConfig> tickers = {
-        {"SPXW", 5700.0, 5.0, 40},
-        {"SPY", 570.0, 1.0, 40},
-        {"QQQ", 480.0, 1.0, 40},
-        {"NVDA", 135.0, 1.0, 40},
+        {"SPXW", 5700.0, 5.0, 40, "european", 100, "index"},
+        {"SPY", 570.0, 1.0, 40, "american", 100, "etf"},
+        {"QQQ", 480.0, 1.0, 40, "american", 100, "etf"},
+        {"NVDA", 135.0, 1.0, 40, "american", 100, "equity"},
+        {"TSLA", 250.0, 2.5, 40, "american", 100, "equity"},
+        {"MSFT", 420.0, 2.5, 40, "american", 100, "equity"},
+        {"AMZN", 190.0, 1.0, 40, "american", 100, "equity"},
+        {"VIX", 18.0, 0.5, 40, "european", 100, "vol_index"},
     };
 
     skylit::live::LiveFeedManager feed(tickers);
@@ -340,7 +344,14 @@ int main(int argc, char** argv) {
             if (i) out << ',';
             out << '"' << known[i] << '"';
         }
-        return skylit::HttpResponse::json(std::format(R"({{"tickers":[{}]}})", out.str()));
+        std::ostringstream det;
+        bool first = true;
+        for (const auto& t : feed.configs()) {
+            if (!first) det << ',';
+            first = false;
+            det << std::format(R"("{}":{{"style":"{}","multiplier":{},"kind":"{}"}})", t.ticker, t.style, t.multiplier, t.underlying_kind);
+        }
+        return skylit::HttpResponse::json(std::format(R"({{"tickers":[{}],"details":{{{}}}}})", out.str(), det.str()));
     });
 
     // Part C.2: full candle series for a ticker+interval. Called on load

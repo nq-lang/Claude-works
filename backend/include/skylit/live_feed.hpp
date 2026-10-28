@@ -40,7 +40,13 @@ struct TickerConfig {
     double base_spot;
     double strike_step;
     int strike_count;
-};
+    // Instrument treatment (documented in docs/TICKERS.md). Metadata only for now: the synthetic source
+    // does not price off these; a real-data source must (VIX: forward-based, European, SOQ settle;
+    // equities: American-style with dividends).
+    std::string style = "american";      // "american" | "european"
+    int multiplier = 100;                // contract multiplier
+    std::string underlying_kind = "equity";  // "equity" | "etf" | "index" | "vol_index"
+}; 
 
 // Session-change badges (per spec): two named windows — "day" (09:30
 // through 16:00) and "overnight" (18:00 through 09:30 the next day). The
@@ -370,6 +376,7 @@ public:
         return out;
     }
 
+    const std::vector<TickerConfig>& configs() const { return tickers_; }
     std::vector<std::string> known_tickers() const {
         std::vector<std::string> out;
         for (const auto& t : tickers_) out.push_back(t.ticker);
