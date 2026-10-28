@@ -23,7 +23,7 @@ try:
         shown_neg = pg.locator("#sidecar .hm-neg-strike").inner_text() if pg.locator("#sidecar .hm-neg-label").is_visible() else ""
         label = pg.locator("#sidecar .hm-neg-label").inner_text()
         check("header says Barney (not 'Neg')", "Barney" in label, label)
-        raw = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/heatmap?ticker=SPY&exposure=GEX&expiration=0"))
+        raw = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/heatmap?ticker=SPY&exposure=GEX&expiration=dte:0"))
         nodes = raw["nodes"]
         pos = [n for n in nodes if n["exposure"] > 0]; neg = [n for n in nodes if n["exposure"] < 0]
         fmt = lambda s: f"{s:g}"
