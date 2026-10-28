@@ -458,6 +458,12 @@
         <label class="atlas-color-field"><input type="color" class="atlas-orb-color" data-key="orbPosColor"><span>Positive exposure</span></label>
         <label class="atlas-color-field"><input type="color" class="atlas-orb-color" data-key="orbNegColor"><span>Negative exposure</span></label>
       </div>
+      <div class="atlas-window-label">Greek legend</div>
+      <div class="atlas-greek-legend" title="Pos/Neg = sign of the exposure at that strike. With several Greeks selected each is drawn separately (never summed); each level reads: Pos|Neg &lt;code&gt; &lt;value&gt;.">
+        ${global.SkylitGreeks.GREEKS.map((g) => `<span class="atlas-greek-legend-item"><i style="background:${g.color}"></i><b>${g.code}</b> ${g.name}<i class="neg" style="background:${g.negColor}"></i></span>`).join('')}
+        <span class="atlas-greek-legend-item muted"><b>GV</b> Gamma+Vanna (only when GEX+VEX is chosen)</span>
+      </div>
+      <div class="atlas-window-hint">Label format: <code>Pos G 1.24M</code> / <code>Neg S 310K</code>. Dot 1 = positive colour, dot 2 = negative colour (used when several Greeks are shown). <b>KING</b> = strike with the most positive exposure; <b>BARNEY</b> = most negative, per Greek and expiry selection.</div>
       <div class="atlas-window-label">Size &amp; opacity</div>
       ${ORB_SLIDER_DEFS.map((d) => `
         <label class="atlas-orb-slider-row">${d.label} <span class="atlas-orb-val" data-key="${d.key}"></span>

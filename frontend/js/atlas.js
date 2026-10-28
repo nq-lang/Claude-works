@@ -28,7 +28,7 @@
   'use strict';
 
   const { exposureToOrbColor } = global.SkylitColorScale;
-  const { applyNodeLimit } = global.SkylitNodeUtils;
+  const { applyNodeLimit, classifyExtremes } = global.SkylitNodeUtils;
 
   function createAtlasController(chartContainerEl, headerEl, opts) {
     const state = {
@@ -66,6 +66,8 @@
       userHasPanned: false,
       gestureActive: false,       // user is mid-drag/pan on the chart: data updates are held back
       pendingBars: new Map(),     // time -> bar, collected while a gesture is active
+      extremesMemory: {},   // greek -> { king, barney } strikes (hysteresis memory)
+      orbGroups: [],
       viewContext: null,   // 'ticker|interval' the chart view currently belongs to
       rightOffset: 0,      // last rightOffset applied (projection room), change-only
       // For the on-chart price/%-change header — derived from the loaded
@@ -534,35 +536,57 @@
       if (!state.showOrbs) { state.orbRange = null; orbLayer.clear(); refreshPriceAutoscale(); return; }
       try {
         inflight.orbs++; started = true;
-        const res = await fetch(
-          `/api/heatmap?ticker=${encodeURIComponent(state.ticker)}&exposure=${encodeURIComponent(state.exposureType)}&expiration=${encodeURIComponent(state.expiration)}`,
-          { signal: pollSignal() }
-        );
-        if (mySeq !== seq.orbs) return;  // a newer request superseded this one
-        const board = await res.json();
-        if (mySeq !== seq.orbs) return;
-        const maxAbs = Math.max(1, ...board.nodes.map((n) => Math.abs(n.exposure)));
-        const filtered = applyNodeLimit(board.nodes, board.spot, state.nodeLimit);
-        // Orbs mark real strike PRICES from live exposure data — a wall can
-        // sit above/below every candle the chart has drawn so far (price
-        // hasn't traded there yet). Recording the full strike range here
-        // lets autoscaleInfoProvider (above) extend the visible price axis
-        // to include it, so the positioning insight is never silently
-        // dropped just because no candle has reached that level yet.
-        state.orbRange = filtered.length
-          ? { min: Math.min(...filtered.map((n) => n.strike)), max: Math.max(...filtered.map((n) => n.strike)) }
-          : null;
+        // GREEKS ARE NEVER MERGED: every selected Greek is requested, ranked and drawn on its own
+        // (the only combined series is the explicit "GEX+VEX" option, which stays one entry).
+        const keys = global.SkylitGreeks.splitSelection(state.exposureType);
+        const multi = keys.length > 1;
+        const boards = await Promise.all(keys.map(async (key) => {
+          const res = await fetch(
+            `/api/heatmap?ticker=${encodeURIComponent(state.ticker)}&exposure=${encodeURIComponent(key)}&expiration=${encodeURIComponent(state.expiration)}`,
+            { signal: pollSignal() }
+          );
+          if (!res.ok) throw new Error(`heatmap ${key}: ${res.status}`);
+          return [key, await res.json()];
+        }));
+        if (mySeq !== seq.orbs) return;  // a newer request superseded this one (selection / ticker changed)
+        const groups = [];
+        let rMin = Infinity, rMax = -Infinity;
+        for (const [key, board] of boards) {
+          const gdef = global.SkylitGreeks.get(key);
+          const maxAbs = Math.max(1, ...board.nodes.map((n) => Math.abs(n.exposure)));   // each Greek is scaled on its OWN range
+          // King / Barney over the FULL strike table (owner's definition), with documented hysteresis;
+          // always shown even when the "Nodes" limit would have dropped them.
+          const memKey = `${state.ticker}|${state.expiration}|${key}`;   // hysteresis never carries across ticker / expiry / Greek
+          const mem = state.extremesMemory[memKey] || (state.extremesMemory[memKey] = {});
+          const ext = classifyExtremes(board.nodes, board.spot, mem);
+          mem.king = ext.king ? ext.king.strike : null; mem.barney = ext.barney ? ext.barney.strike : null;
+          const filtered = applyNodeLimit(board.nodes, board.spot, state.nodeLimit);
+          const set = new Map(filtered.map((n) => [n.strike, n]));
+          if (ext.king) set.set(ext.king.strike, ext.king);
+          if (ext.barney) set.set(ext.barney.strike, ext.barney);
+          // Orbs mark real strike PRICES: a wall can sit beyond every candle drawn so far, so the
+          // price autoscale is extended to include all shown strikes (see autoscaleInfoProvider).
+          for (const n of set.values()) { rMin = Math.min(rMin, n.strike); rMax = Math.max(rMax, n.strike); }
+          // Colours: one Greek keeps the user's pos/neg colours; several Greeks get per-Greek hues.
+          const colorFor = (exposure) => {
+            const hex = multi && gdef ? (exposure >= 0 ? gdef.color : gdef.negColor)
+              : (exposure >= 0 ? state.orbSettings.posColor : state.orbSettings.negColor);
+            return hexToRgba(hex || (exposure >= 0 ? '#fcbf24' : '#a855f7'), 1);
+          };
+          groups.push({
+            greek: key,
+            nodes: [...set.values()].sort((x, y) => x.strike - y.strike).map((n) => {
+              const isKing = !!ext.king && n.strike === ext.king.strike, isBarney = !!ext.barney && n.strike === ext.barney.strike;
+              const style = computeOrbStyle(n, maxAbs, isKing || isBarney);
+              const sizeFrac = Math.min(1, Math.abs(n.exposure) / maxAbs);
+              return { strike: n.strike, exposure: n.exposure, isKing, isBarney, opacity: style.opacity, sizeFrac, colorBase: colorFor(n.exposure) };
+            }),
+          });
+        }
+        state.orbRange = rMin <= rMax ? { min: rMin, max: rMax } : null;
         refreshPriceAutoscale();
-        // Orb colors are user-configurable (Orbs window): positive/negative
-        // exposure each have their own color; defaults are the original
-        // gold / purple.
-        const colorFor = (exposure, _maxAbs, opacity) => {
-          const hex = exposure >= 0 ? state.orbSettings.posColor : state.orbSettings.negColor;
-          return hexToRgba(hex || (exposure >= 0 ? '#fcbf24' : '#a855f7'), opacity);
-        };
-        orbLayer.render(filtered, maxAbs, colorFor, computeOrbStyle,
-          { sizeScale: Math.max(0.2, (state.orbSettings.size || 50) / 50),
-            showLabels: state.orbSettings.showLabels !== false });
+        orbLayer.renderGroups(groups, { sizeScale: Math.max(0.2, (state.orbSettings.size || 50) / 50), showLabels: state.orbSettings.showLabels !== false });
+        state.orbGroups = groups;
       } catch (e) { /* board unavailable — leave chart bare rather than throw */ }
       finally { if (started) inflight.orbs--; }
     }
@@ -687,6 +711,8 @@
       isPanned() { return state.userHasPanned; },
       getTicker() { return state.ticker; },
       getDrawingLayer() { return drawingLayer; },
+      getOrbGroups() { return state.orbGroups; },
+      getOrbLayer() { return orbLayer; },
     };
   }
 

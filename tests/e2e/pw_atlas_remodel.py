@@ -65,8 +65,13 @@ try:
         status = page.inner_text(".atlas-expiry-status")
         check("status outside the window reads '1DTE GEX, VEX & COLOR ... LIVE'",
               "1DTE GEX, VEX & COLOR" in status and "live" in status.lower(), status)
-        check("chart data request carries the chosen Greeks and DTE",
-              seen("exposure=GEX,VEX,COLOR", mark) and seen("expiration=dte:1", mark))
+        page.wait_for_timeout(1500)
+        check("chart requests each chosen Greek SEPARATELY (never merged) for the chosen DTE",
+              all(seen(f"/api/heatmap?ticker=SPY&exposure={g}&expiration=dte:1", mark) for g in ("GEX", "VEX", "COLOR"))
+              and not seen("exposure=GEX,VEX", mark))
+        page.click(".atlas-expiry-greeks .atlas-chip[data-key='VEX']")      # back to a single Greek (GEX): user colours apply
+        page.click(".atlas-expiry-greeks .atlas-chip[data-key='COLOR']")
+        page.wait_for_timeout(900)
         page.keyboard.press("Escape")
 
         print("[C] Orbs window")
