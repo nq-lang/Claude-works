@@ -368,15 +368,34 @@ inline void compute_derived_state(HeatmapBoard& board, const BoardComputeConfig&
 
 inline constexpr double kVexPlaceholderDamping = 0.4;
 
+// GEX+VEX — the ONLY sanctioned Greek combination (owner decision: Greeks are never summed ad hoc).
+// Raw GEX and VEX carry different units and magnitudes, so a raw sum lets one dominate. Documented method
+// (docs/GREEKS.md): scale VEX onto the GEX scale using the board-wide peak magnitudes, then add:
+//     C_i = G_i + (Gmax / Vmax) * V_i,   Gmax = max_j |G_j|, Vmax = max_j |V_j|   (Vmax == 0 -> C_i = G_i)
+// i.e. each Greek is normalised by its own peak (equal weight 1:1) and the result is expressed in
+// GEX-equivalent units. Sign convention: each term keeps its own sign (positive = net long-dealer exposure).
+// This is a normalised, equal-weight scenario lens — NOT the calibrated spot-vol elasticity model; that needs
+// the owner's coefficients.
+inline void combine_gex_vex(HeatmapBoard& board, double vex_ratio_to_gex) {
+    double gmax = 0.0, vmax = 0.0;
+    for (const auto& n : board.nodes) {
+        gmax = std::max(gmax, std::abs(n.exposure));
+        vmax = std::max(vmax, std::abs(n.exposure * vex_ratio_to_gex));
+    }
+    const double k = vmax > 1e-12 ? gmax / vmax : 0.0;
+    for (auto& n : board.nodes) {
+        const double before = n.exposure;
+        n.exposure = before + k * before * vex_ratio_to_gex;
+        if (std::abs(before) > 1e-12) n.rate_of_change *= n.exposure / before;
+    }
+}
+
 inline HeatmapBoard apply_exposure_type(HeatmapBoard board, ExposureType type) {
     if (type == ExposureType::GEX) return board;  // native series already "is" GEX here
-    for (auto& n : board.nodes) {
-        double vex_component = n.exposure * kVexPlaceholderDamping;
-        if (type == ExposureType::VEX) {
-            n.exposure = vex_component;
-        } else {  // GEX_PLUS_VEX
-            n.exposure = n.exposure + vex_component;
-        }
+    if (type == ExposureType::GEX_PLUS_VEX) {
+        combine_gex_vex(board, kVexPlaceholderDamping);
+    } else {
+        for (auto& n : board.nodes) n.exposure = n.exposure * kVexPlaceholderDamping;
     }
     compute_derived_state(board);
     return board;
@@ -469,6 +488,11 @@ inline std::string greek_mask_to_string(unsigned mask) {
 
 inline HeatmapBoard apply_greek_mask(HeatmapBoard board, unsigned mask) {
     if (mask == kGreekGEX) return board;  // native series already "is" GEX here
+    if (mask == (kGreekGEX | kGreekVEX)) {  // the one sanctioned combination: normalised GEX+VEX
+        combine_gex_vex(board, kVexPlaceholderDamping);
+        compute_derived_state(board);
+        return board;
+    }
     for (auto& n : board.nodes) {
         const double before = n.exposure;
         n.exposure = greek_mask_value(mask, before, n.strike);

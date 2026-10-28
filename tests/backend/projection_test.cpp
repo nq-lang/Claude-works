@@ -476,12 +476,17 @@ int main() {
         auto both = apply_greek_mask(b, kGreekGEX | kGreekVEX);
         auto vex = apply_greek_mask(b, kGreekVEX);
         bool sums = true, gex_native = true;
+        // documented normalised combination (docs/GREEKS.md), computed independently here:
+        //   C = G + (Gmax/Vmax) * V   with V = damping * G  =>  C = G * (1 + Gmax / (damping * Gmax) * damping)
+        double gmax = 0, vmax = 0;
+        for (const auto& n : b.nodes) { gmax = std::max(gmax, std::abs(n.exposure)); vmax = std::max(vmax, std::abs(n.exposure * kVexPlaceholderDamping)); }
         for (std::size_t i = 0; i < b.nodes.size(); ++i) {
-            if (std::abs(both.nodes[i].exposure - (b.nodes[i].exposure * (1.0 + kVexPlaceholderDamping))) > 1e-6) sums = false;
+            const double v = b.nodes[i].exposure * kVexPlaceholderDamping;
+            if (std::abs(both.nodes[i].exposure - (b.nodes[i].exposure + (gmax / vmax) * v)) > 1e-6) sums = false;
             if (gex.nodes[i].exposure != b.nodes[i].exposure) gex_native = false;
         }
         CHECK(gex_native, "GEX-only leaves the native series untouched");
-        CHECK(sums, "GEX+VEX is the per-strike SUM of both series");
+        CHECK(sums, "GEX+VEX is the documented peak-normalised combination G + (Gmax/Vmax)*V");
         CHECK(std::abs(vex.nodes[3].exposure - b.nodes[3].exposure * kVexPlaceholderDamping) < 1e-6, "VEX-only matches the existing VEX series");
         auto ch = apply_greek_mask(b, kGreekCHEX);
         bool varied = false;

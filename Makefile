@@ -104,7 +104,13 @@ $(ESC_BIN): tests/backend/json_escape_test.cpp $(wildcard backend/include/skylit
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(STD) $(WARN) $(OPT_RELEASE) $(INCLUDES) $< -o $@
 
-test-unit: $(UNIT_BIN) $(TAIL_BIN) $(ESC_BIN)
+BS_BIN := $(BUILD_DIR)/bs_greeks_test
+$(BS_BIN): tests/backend/bs_greeks_test.cpp $(wildcard backend/include/skylit/*.hpp) | check-compiler
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(STD) $(WARN) $(OPT_RELEASE) $(INCLUDES) $< -o $@
+
+test-unit: $(UNIT_BIN) $(TAIL_BIN) $(ESC_BIN) $(BS_BIN)
+	$(BS_BIN)
 	$(UNIT_BIN)
 	$(TAIL_BIN)
 	$(ESC_BIN)

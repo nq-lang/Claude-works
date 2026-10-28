@@ -362,7 +362,7 @@
       <div class="atlas-chip-row atlas-expiry-dte"></div>
       <div class="atlas-window-label">Greek exposure</div>
       <div class="atlas-chip-row atlas-chip-row-greeks atlas-expiry-greeks"></div>
-      <div class="atlas-chip-row atlas-combo-row"><button class="atlas-chip atlas-combo-chip atlas-expiry-combo" title="Gamma and vanna combined"><span class="atlas-chip-main">GEX+VEX</span><span class="atlas-chip-sub">Gamma + Vanna combined</span></button></div>
+      <div class="atlas-chip-row atlas-combo-row"><button class="atlas-chip atlas-combo-chip atlas-expiry-combo" title="GEX+VEX: each Greek normalised by its own peak (equal weight), shown in GEX-equivalent units. See docs/GREEKS.md"><span class="atlas-chip-main">GEX+VEX</span><span class="atlas-chip-sub">Gamma + Vanna combined</span></button></div>
       <div class="atlas-window-preview atlas-expiry-preview"></div>
       <div class="atlas-window-note">Vanna, charm, color and speed use simulated series until your live Greek feed is connected.</div>
     `;
@@ -398,7 +398,7 @@
       <div class="atlas-chip-row atlas-proj-dte"></div>
       <div class="atlas-window-label">Greek exposure</div>
       <div class="atlas-chip-row atlas-chip-row-greeks atlas-proj-greeks"></div>
-      <div class="atlas-chip-row atlas-combo-row"><button class="atlas-chip atlas-combo-chip atlas-proj-combo" title="Gamma and vanna combined"><span class="atlas-chip-main">GEX+VEX</span><span class="atlas-chip-sub">Gamma + Vanna combined</span></button></div>
+      <div class="atlas-chip-row atlas-combo-row"><button class="atlas-chip atlas-combo-chip atlas-proj-combo" title="GEX+VEX: each Greek normalised by its own peak (equal weight), shown in GEX-equivalent units. See docs/GREEKS.md"><span class="atlas-chip-main">GEX+VEX</span><span class="atlas-chip-sub">Gamma + Vanna combined</span></button></div>
       <div class="atlas-window-preview atlas-proj-preview"></div>
       <div class="atlas-window-note">Vanna, charm, color and speed use simulated series until your live Greek feed is connected.</div>
     `;
