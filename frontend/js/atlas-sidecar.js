@@ -144,6 +144,9 @@
         greekOptions: ['GEX', 'VEX', 'GEX+VEX'],   // Atlas heatmaps: gamma, vanna, or both combined
         compactControls: true,                      // DTE/Greek/Velocity/EXTREME live in the heatmap's settings
         settingsKey: 'atlas:single',                // applied settings persist per panel
+        onSettingsApplied: (cfg) => {   // the header Badges button always mirrors the last applied setting
+          state.showBadges = cfg.showBadges; el.badgesBtn.classList.toggle('active', state.showBadges);
+        },
       });
       state.singlePanel = { controller };
       state.showBadges = controller.getSettings().showBadges;   // the header Badges button mirrors the applied setting
@@ -172,6 +175,9 @@
           greekOptions: ['GEX', 'VEX', 'GEX+VEX'],
           compactControls: true,
           settingsKey: `atlas:multi:${idx}`,
+          onSettingsApplied: (cfg) => {   // the header Badges button always mirrors the last applied setting
+            state.showBadges = cfg.showBadges; el.badgesBtn.classList.toggle('active', state.showBadges);
+          },
         });
         state.panels.push({ controller });
       });

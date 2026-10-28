@@ -222,4 +222,7 @@ fi
 QS="$(curl -sf "http://127.0.0.1:${PORT}/api/quadrinity?tickers=SPY,QQQ&specs=GEX~dte:0,CHEX~dte:2")"
 if [[ "${QS}" != *'"panes"'* ]]; then echo "[smoke] FATAL: per-pane Quadrinity specs rejected" >&2; exit 1; fi
 
+echo "[smoke] Expiry selection correctness (sums, strict selector validation)..."
+python3 "$(dirname "$0")/expiry_api_test.py" "${PORT}" >/dev/null || { echo "[smoke] FATAL: expiry_api_test failed" >&2; exit 1; }
+
 echo "[smoke] All checks passed."

@@ -205,6 +205,11 @@ int main(int argc, char** argv) {
         std::string ticker = query_param(req.query, "ticker", "SPY");
         std::string exposure_raw = query_param(req.query, "exposure", "GEX");
         std::string expiration = query_param(req.query, "expiration", "0dte");
+        if (auto why = skylit::live::LiveFeedManager::validate_selector(expiration); !why.empty()) {
+            return skylit::HttpResponse::json(
+                std::format(R"({{"error":"invalid expiration selector","detail":"{}","expiration":"{}"}})",
+                            skylit::json::escape(why), skylit::json::escape(expiration)), 400);
+        }
 
         auto board = prepare_board(
             feed, ticker, exposure_raw, expiration, query_param(req.query, "velocity", "0"),
@@ -248,6 +253,11 @@ int main(int argc, char** argv) {
                     exp_i = specs[i].substr(0, tilde);
                     dte_i = specs[i].substr(tilde + 1);
                 }
+            }
+            if (auto why = skylit::live::LiveFeedManager::validate_selector(dte_i); !why.empty()) {
+                return skylit::HttpResponse::json(
+                    std::format(R"({{"error":"invalid expiration selector","detail":"{}","expiration":"{}"}})",
+                                skylit::json::escape(why), skylit::json::escape(dte_i)), 400);
             }
             auto board = prepare_board(feed, requested[i], exp_i, dte_i, "0", "", "", "");
             if (board) filtered.push_back(std::move(*board));

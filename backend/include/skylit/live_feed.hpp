@@ -203,6 +203,33 @@ public:
         return dte <= 0 ? std::string("0dte") : "next" + std::to_string(dte);
     }
 
+    // Strict selector validation (no silent clamping/fallback on the API): returns an empty string when the
+    // selector is valid, otherwise a human-readable reason. Valid: "0dte"; "current+N" (N integer 1..50);
+    // "dte:a,b,..." (each an integer 0..50, at least one). Anything else is an error, not "0dte".
+    static std::string validate_selector(const std::string& sel) {
+        auto parse_int = [](const std::string& t, int lo, int hi, int& out) {
+            if (t.empty() || t.size() > 3) return false;
+            for (char c : t) if (c < '0' || c > '9') return false;
+            out = std::stoi(t);
+            return out >= lo && out <= hi;
+        };
+        int v = 0;
+        if (sel == "0dte") return "";
+        if (sel.rfind("current+", 0) == 0)
+            return parse_int(sel.substr(8), 1, kMaxNextExpirations, v) ? "" : "current+N needs an integer N in 1.." + std::to_string(kMaxNextExpirations);
+        if (sel.rfind("dte:", 0) == 0) {
+            std::string rest = sel.substr(4), tok; int count = 0;
+            for (std::size_t i = 0; i <= rest.size(); ++i) {
+                if (i == rest.size() || rest[i] == ',') {
+                    if (!parse_int(tok, 0, kMaxNextExpirations, v)) return "dte: list needs integers in 0.." + std::to_string(kMaxNextExpirations);
+                    ++count; tok.clear();
+                } else tok.push_back(rest[i]);
+            }
+            return count ? "" : "dte: list is empty";
+        }
+        return "unknown selector form (use 0dte, current+N or dte:a,b,...)";
+    }
+
     static std::vector<std::string> buckets_for_selector(const std::string& selector) {
         if (selector.rfind("dte:", 0) == 0) {
             std::vector<std::string> out;

@@ -168,6 +168,7 @@
         <div class="hm-footer">
           <span class="hm-min">--</span>
           <span class="hm-max">--</span>
+          <span class="hm-fresh" title="Age of the data on screen (time since the last successful refresh)">--</span>
           <div class="hm-gradient-bar"></div>
         </div>
       </div>
@@ -360,6 +361,7 @@
       extremesCheckbox: settingsPopover.querySelector('.hm-extremes-checkbox'),
       extremesCountSelect: settingsPopover.querySelector('.hm-extremes-count'),
       rows: container.querySelector('.hm-rows'),
+      fresh: container.querySelector('.hm-fresh'),
       min: container.querySelector('.hm-min'),
       max: container.querySelector('.hm-max'),
       gradientBar: container.querySelector('.hm-gradient-bar'),
@@ -432,6 +434,7 @@
       persistSettings();
       refreshDraftUi(); syncDteUi(); syncToggleButtons();
       if (selChanged) notifySelection();
+      if (opts.onSettingsApplied) opts.onSettingsApplied(pickSettings(state));
       fetchAndRender();
       return true;
     }
@@ -442,6 +445,7 @@
 
     function render(board) {
       if (state.firstSpot === null) state.firstSpot = board.spot;
+      state.lastOkAt = Date.now(); paintFreshness();
       const changePct = ((board.spot - state.firstSpot) / state.firstSpot) * 100;
       el.priceVal.textContent = `$${board.spot.toFixed(2)}`;
       el.changeBadge.textContent = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
@@ -458,6 +462,12 @@
       el.kingStrike.textContent = kingNode ? `@ ${fmtStrike(kingNode.strike)}` : '';
       el.negLabel.style.display = negNode ? '' : 'none';
       if (negNode) el.negStrike.textContent = `@ ${fmtStrike(negNode.strike)}`;
+
+      if (!board.nodes.length) {   // explicit empty state — never a blank panel
+        el.rows.innerHTML = `<div class="hm-empty">No ${state.greek} exposure for ${state.ticker} at ${state.dte}DTE.</div>`;
+        el.min.textContent = '--'; el.max.textContent = '--';
+        return;
+      }
 
       // Every strike the backend returned for this DTE/expiration, full
       // stop — no client-side limiting. See the removed-nodeLimit comment
@@ -585,6 +595,18 @@
     // request is outstanding or the tab is hidden, so slow links cannot pile up.
     let renderSeq = 0;
     let inflight = 0;
+    // Freshness: age of the data on screen. LIVE while < 6 s old; STALE (red) beyond that, so a
+    // frozen feed can never masquerade as live data.
+    function paintFreshness() {
+      if (!el.fresh) return;
+      if (!state.lastOkAt) { el.fresh.textContent = '--'; el.fresh.classList.remove('stale'); return; }
+      const age = (Date.now() - state.lastOkAt) / 1000;
+      const stale = age >= 6;
+      el.fresh.textContent = stale ? `STALE ${Math.round(age)}s` : 'LIVE';
+      el.fresh.classList.toggle('stale', stale);
+    }
+    const freshTimer = setInterval(paintFreshness, 1000);
+
     async function fetchAndRender(isPoll = false) {
       if (isPoll && (inflight || document.hidden)) return;
       const mySeq = ++renderSeq;
@@ -604,7 +626,10 @@
         if (mySeq !== renderSeq) return;
         render(board);
       } catch (e) {
-        if (mySeq === renderSeq) el.rows.innerHTML = `<div class="hm-error">Unable to load ${state.ticker}: ${e.message}</div>`;
+        if (mySeq === renderSeq) {
+          el.rows.innerHTML = `<div class="hm-error">Unable to load ${state.ticker} (${state.dte}DTE ${state.greek}): ${e.message}. Retrying every 2 s.</div>`;
+          paintFreshness();
+        }
       } finally {
         inflight--;
       }
@@ -633,7 +658,7 @@
     return {
       pause: pausePolling,
       resume: resumePolling,
-      destroy() { clearInterval(state.pollHandle); renderSeq++; lifecycle.abort(); settingsPopover.remove(); dteMenu.remove(); },
+      destroy() { clearInterval(state.pollHandle); clearInterval(freshTimer); renderSeq++; lifecycle.abort(); settingsPopover.remove(); dteMenu.remove(); },
       setTicker(t) { state.ticker = t; state.hasRenderedOnce = false; el.tickerSelect.value = t; fetchAndRender(); },
       setGreek(g) { state.greek = draft.greek = g; persistSettings(); refreshDraftUi(); fetchAndRender(); },
       setDte(d) { state.dte = draft.dte = d; state.hasRenderedOnce = false; persistSettings(); refreshDraftUi(); fetchAndRender(); },
